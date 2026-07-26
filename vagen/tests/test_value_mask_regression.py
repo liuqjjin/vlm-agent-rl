@@ -113,3 +113,28 @@ def test_no_concat_gae_supervises_exactly_one_value_per_turn():
     mask = returns.ne(-100.0)
     assert mask.sum().item() == 2
     assert mask.sum(dim=-1).tolist() == [1, 1]
+
+
+def test_sparse_value_supervision_remains_masked_for_twenty_updates():
+    returns = torch.tensor([[-100.0, 2.0]])
+    value_mask = returns.ne(-100.0).float()
+    predictions = torch.nn.Parameter(torch.tensor([[0.5, -1.0]]))
+    optimizer = torch.optim.SGD([predictions], lr=0.2)
+    ignored_initial = predictions.detach()[0, 0].item()
+
+    for _ in range(20):
+        optimizer.zero_grad()
+        loss, _ = compute_value_loss(
+            vpreds=predictions,
+            values=predictions.detach(),
+            returns=returns,
+            response_mask=value_mask,
+            cliprange_value=1000.0,
+            loss_agg_mode="token-mean",
+        )
+        loss.backward()
+        assert predictions.grad[0, 0].item() == pytest.approx(0.0)
+        optimizer.step()
+
+    assert predictions.detach()[0, 0].item() == pytest.approx(ignored_initial)
+    assert predictions.detach()[0, 1].item() == pytest.approx(2.0, abs=0.04)

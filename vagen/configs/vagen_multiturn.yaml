@@ -66,6 +66,14 @@ algorithm:
     max_p99_ratio_deviation: 0.2
     max_mean_abs_logprob_delta: 0.05
     max_clip_fraction: 0.01
+  no_concat_episode_grpo:
+    reward_mode: outcome
+    loss_weighting: trajectory
+    incomplete_group_action: error
+    success_reward: 1.0
+    process_reward_cap: 0.2
+    format_reward: 0.1
+    std_epsilon: 1.0e-6
 
 # ============================================================================
 # Data Filter Configuration
