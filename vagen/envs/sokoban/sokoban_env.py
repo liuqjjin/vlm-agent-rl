@@ -232,7 +232,12 @@ class Sokoban(GymImageEnv):
         else:
             obs_str = action_template(self.valid_actions, img_str) + "\n" #+ format_prompt_str
 
-        obs: Dict[str, Any] = {"obs_str": obs_str}
+        obs: Dict[str, Any] = {
+            "obs_str": obs_str,
+            # This text is metadata for state-relative grouping.  The policy
+            # still receives the visual observation above.
+            "state_anchor": self._grid_to_text(),
+        }
         if multi_modal_input is not None:
             obs["multi_modal_input"] = multi_modal_input
         return obs

@@ -17,9 +17,11 @@ from ..envs.gym_image_env import GymImageEnv
 from omegaconf import OmegaConf
 import traceback
 import importlib
+from vagen.utils.state_anchor import canonical_state_anchor
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 from .gym_agent_loop import convert_obs_to_content, extract_success, _flatten_text_only_content, _normalize_images
+
 
 class AgentState(Enum):
     PENDING = "pending"
@@ -41,6 +43,7 @@ class AgentData:
         sys_images: Optional[List[Image.Image]] = None,
         cur_msg: Optional[Dict[str, Any]] = None,
         cur_images: Optional[List[Image.Image]] = None,
+        cur_anchor: Optional[str] = None,
         group_idx: int = 0,
         traj_idx: int = 0,
     ):
@@ -49,6 +52,7 @@ class AgentData:
         
         self.cur_msg: Optional[Dict[str, Any]] = cur_msg
         self.cur_images: Optional[List[Image.Image]] = cur_images
+        self.cur_anchor = cur_anchor
         
         self.metrics = metrics
         self.request_id = request_id
@@ -124,6 +128,7 @@ class GymAgentLoop(AgentLoopBase):
         
         cur_msg={"role": "user", "content": convert_obs_to_content(init_obs, **kwargs)}
         cur_images=_normalize_images(init_obs.get("multi_modal_input", {}).get("<image>", []) or [])
+        cur_anchor = canonical_state_anchor(init_obs, self.env_max_turns)
 
         per_turn_response_limit = int(kwargs.get("response_length_per_turn") or self.response_length)
         per_turn_response_limit = min(per_turn_response_limit, self.response_length)
@@ -135,6 +140,7 @@ class GymAgentLoop(AgentLoopBase):
             sys_images=sys_images,
             cur_msg=cur_msg,
             cur_images=cur_images,
+            cur_anchor=cur_anchor,
             metrics=metrics,
             request_id=request_id,
             env=env,
@@ -235,6 +241,7 @@ class GymAgentLoop(AgentLoopBase):
         so the episode ends on an assistant turn.
         """
         action_str = agent_data.last_assistant_text or ""
+        state_anchor = agent_data.cur_anchor
         try:
             obs, reward, done, info = await agent_data.env.step(action_str)
             # traceback
@@ -288,6 +295,7 @@ class GymAgentLoop(AgentLoopBase):
                 "group_idx": agent_data.group_idx,
                 "traj_idx": agent_data.traj_idx,
                 "turn_idx": agent_data.env_turns,
+                "state_anchor": state_anchor,
                           
             },
         )
@@ -298,6 +306,12 @@ class GymAgentLoop(AgentLoopBase):
         cur_images=_normalize_images(obs.get("multi_modal_input", {}).get("<image>", []) or [])
         agent_data.cur_msg = cur_msg
         agent_data.cur_images = cur_images
+        remaining_turns = (
+            None
+            if self.env_max_turns is None
+            else max(0, int(self.env_max_turns) - agent_data.env_turns)
+        )
+        agent_data.cur_anchor = canonical_state_anchor(obs, remaining_turns)
         if last_turn:
             return AgentState.TERMINATED
 

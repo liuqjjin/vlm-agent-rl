@@ -605,11 +605,22 @@ class RayPPOTrainer:
             else:
                 sample_images.extend([None] * len(outputs))
             reward_extra_infos_to_dump = reward_extra_infos_dict.copy()
-            if "request_id" in batch.non_tensor_batch:
-                reward_extra_infos_dict.setdefault(
-                    "request_id",
-                    batch.non_tensor_batch["request_id"].tolist(),
-                )
+            rollout_metadata_keys = (
+                "request_id",
+                "group_idx",
+                "traj_idx",
+                "turn_idx",
+                "last_turn",
+                "traj_success",
+                "state_anchor",
+            )
+            for key in rollout_metadata_keys:
+                if key in batch.non_tensor_batch:
+                    values = batch.non_tensor_batch[key]
+                    reward_extra_infos_to_dump.setdefault(
+                        key,
+                        values.tolist() if hasattr(values, "tolist") else list(values),
+                    )
 
             self._dump_generations(
                 inputs=inputs,
