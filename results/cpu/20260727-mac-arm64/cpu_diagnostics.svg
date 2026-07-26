@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="580" viewBox="0 0 1080 580">
+<style>
+  .bg { fill: #fbfaf7; }
+  .title { font-family: Arial, sans-serif; font-size: 20px; font-weight: 700; fill: #17212b; }
+  .subtitle, .tick, .legend { font-family: Arial, sans-serif; font-size: 13px; fill: #53606d; }
+  .axis { stroke: #8b96a1; stroke-width: 1.2; }
+  .masked { fill: none; stroke: #087e8b; stroke-width: 3; }
+  .legacy { fill: none; stroke: #d1495b; stroke-width: 3; }
+  .point { fill: #f18f01; opacity: .85; }
+</style>
+<rect width="1080" height="580" class="bg"/>
+<text x="85" y="44" class="title">Sparse critic supervision</text><text x="85" y="69" class="subtitle">Ignored prediction over 20 SGD updates</text><line x1="85" y1="495" x2="535" y2="495" class="axis"/><line x1="85" y1="105" x2="85" y2="495" class="axis"/><text x="73" y="110" text-anchor="end" class="tick">1</text><text x="73" y="500" text-anchor="end" class="tick">-100</text>
+<polyline points="85.00,106.93 107.50,106.93 130.00,106.93 152.50,106.93 175.00,106.93 197.50,106.93 220.00,106.93 242.50,106.93 265.00,106.93 287.50,106.93 310.00,106.93 332.50,106.93 355.00,106.93 377.50,106.93 400.00,106.93 422.50,106.93 445.00,106.93 467.50,106.93 490.00,106.93 512.50,106.93 535.00,106.93" class="masked"/>
+<polyline points="85.00,106.93 107.50,145.74 130.00,180.66 152.50,212.10 175.00,240.39 197.50,265.85 220.00,288.76 242.50,309.39 265.00,327.95 287.50,344.65 310.00,359.69 332.50,373.22 355.00,385.40 377.50,396.36 400.00,406.22 422.50,415.10 445.00,423.09 467.50,430.28 490.00,436.75 512.50,442.58 535.00,447.82" class="legacy"/>
+<text x="85" y="526" class="tick">update 0</text>
+<text x="535" y="526" text-anchor="end" class="tick">update 20</text>
+<line x1="85" y1="548" x2="113" y2="548" class="masked"/>
+<text x="121" y="553" class="legend">value_mask preserved</text>
+<line x1="305" y1="548" x2="333" y2="548" class="legacy"/>
+<text x="341" y="553" class="legend">legacy mask dropped</text>
+<text x="615" y="44" class="title">Sokoban length bias</text><text x="615" y="69" class="subtitle">Extra environment reward from splitting the same solution</text><line x1="615" y1="495" x2="1065" y2="495" class="axis"/><line x1="615" y1="105" x2="615" y2="495" class="axis"/><text x="603" y="110" text-anchor="end" class="tick">0.5</text><text x="603" y="500" text-anchor="end" class="tick">0</text>
+<circle cx="615.00" cy="339.00" r="5" class="point"/><circle cx="638.68" cy="261.00" r="5" class="point"/><circle cx="662.37" cy="339.00" r="5" class="point"/><circle cx="686.05" cy="261.00" r="5" class="point"/><circle cx="709.74" cy="339.00" r="5" class="point"/><circle cx="733.42" cy="339.00" r="5" class="point"/><circle cx="757.11" cy="339.00" r="5" class="point"/><circle cx="780.79" cy="339.00" r="5" class="point"/><circle cx="804.47" cy="261.00" r="5" class="point"/><circle cx="828.16" cy="339.00" r="5" class="point"/><circle cx="851.84" cy="261.00" r="5" class="point"/><circle cx="875.53" cy="339.00" r="5" class="point"/><circle cx="899.21" cy="261.00" r="5" class="point"/><circle cx="922.89" cy="339.00" r="5" class="point"/><circle cx="946.58" cy="261.00" r="5" class="point"/><circle cx="970.26" cy="261.00" r="5" class="point"/><circle cx="993.95" cy="339.00" r="5" class="point"/><circle cx="1017.63" cy="261.00" r="5" class="point"/><circle cx="1041.32" cy="339.00" r="5" class="point"/><circle cx="1065.00" cy="261.00" r="5" class="point"/>
+<text x="615" y="526" class="tick">seed 0</text>
+<text x="1065" y="526" text-anchor="end" class="tick">seed 19</text>
+<text x="615" y="553" class="legend">Same shortest-path actions; only turn packing changes.</text>
+</svg>
