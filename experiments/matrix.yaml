@@ -1,0 +1,94 @@
+schema_version: 1
+project: vlm_agent_rl
+model: Qwen/Qwen2.5-VL-3B-Instruct
+
+invariants:
+  filter_enabled: false
+  rollout_train_parity_gate: true
+  qwen3_vl_formal_no_concat_allowed: false
+  base_eval_temperature: 0
+  state_relative_requires_preflight: true
+
+methods:
+  base:
+    train: false
+    eval_only: true
+  concat_grpo:
+    advantage: grpo
+    concat_multi_turn: true
+    critic: false
+    rollout_n: 4
+  no_concat_gae:
+    advantage: no_concat_gae
+    concat_multi_turn: false
+    critic: true
+    rollout_n: 1
+  no_concat_episode_grpo:
+    advantage: no_concat_episode_grpo
+    concat_multi_turn: false
+    critic: false
+    rollout_n: 4
+
+environments:
+  sokoban:
+    train: examples/train/sokoban/train_sokoban_vision.yaml
+    validation: examples/train/sokoban/val_sokoban_vision.yaml
+    evaluation: examples/evaluate/sokoban/config.yaml
+    evaluation_seeds: [10000, 10128]
+  navigation:
+    train: examples/train/navigation/train_navigation.yaml
+    validation: examples/train/navigation/val_navigation.yaml
+    evaluation: examples/evaluate/navigation/config_base.yaml
+    evaluation_seeds: [0, 60]
+
+funnel:
+  smoke:
+    steps: 5
+    train_batch_size: 2
+    rollout_n: 2
+    evaluation_episodes: 4
+  core_screening:
+    methods: [concat_grpo, no_concat_gae, no_concat_episode_grpo]
+    environments: [sokoban]
+    seeds: [0]
+    steps: 50
+  episode_screening:
+    rewards: [outcome, bounded_process, format_gate]
+    policy_objectives: [token, turn, trajectory]
+    environments: [sokoban]
+    seeds: [0]
+    steps: 50
+  confirmatory:
+    select_after_screening: true
+    environments: [sokoban, navigation]
+    seeds: [0, 1, 2]
+    steps: 401
+  anti_cheating:
+    observation_ablations: [none, remove, shuffle_tiles]
+    checks:
+      - template_collapse
+      - group_reward_variance
+      - invalid_actions
+      - reward_turn_correlation
+      - representative_failures
+
+required_result_columns:
+  - Method
+  - Visual Success
+  - Peak VRAM
+  - GPU·h
+  - Mean Turns
+  - Ratio P95
+
+gates:
+  parity:
+    max_p95_ratio_deviation: 0.1
+    max_p99_ratio_deviation: 0.2
+    max_mean_abs_logprob_delta: 0.05
+    max_clip_fraction: 0.01
+  state_relative:
+    min_rows: 64
+    max_missing_anchor_fraction: 0.01
+    min_comparable_row_fraction: 0.20
+    min_action_diversity_fraction: 0.10
+    min_mean_return_to_go_variance: 0.0001

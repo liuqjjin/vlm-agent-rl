@@ -11,7 +11,7 @@ mkdir -p "$LOG_DIR"
 
 # ---------- Model / Server Config ----------
 MODEL_NAME="${MODEL_NAME:-"qwen_25_vl_3b"}"
-MODEL_PATH="${QWEN25_VL_7B_PATH:-"Qwen/Qwen2.5-VL-3B-Instruct"}"
+MODEL_PATH="${MODEL_PATH:-${QWEN25_VL_7B_PATH:-Qwen/Qwen2.5-VL-3B-Instruct}}"
 DP_SIZE="${QWEN25_VL_7B_DP:-1}"
 TP_SIZE="${QWEN25_VL_7B_TP:-1}"
 MEM_FRACTION="${QWEN25_VL_7B_MEM:-0.80}"
