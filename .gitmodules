@@ -1,4 +1,4 @@
 [submodule "verl"]
 	path = verl
-	url = https://github.com/JamesKrW/verl.git
-	branch = vagen-lite
+	url = https://github.com/liuqjjin/verl.git
+	branch = vagen-value-mask-policy-weights
