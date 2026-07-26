@@ -25,6 +25,7 @@ fi
   --requirement "${ROOT_DIR}/requirements/cpu-test.txt"
 "${CONDA_EXE_PATH}" run --name "${ENV_NAME}" \
   python -m pip install --no-deps --editable "${ROOT_DIR}/verl" --editable "${ROOT_DIR}"
+"${CONDA_EXE_PATH}" run --name "${ENV_NAME}" python -m pip check
 
 echo "[OK] CPU environment '${ENV_NAME}' is ready."
 echo "     conda run -n ${ENV_NAME} bash scripts/run_smoke.sh"
