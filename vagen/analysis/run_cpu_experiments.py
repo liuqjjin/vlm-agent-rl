@@ -319,8 +319,8 @@ def _write_svg(
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
 <style>
   .bg {{ fill: #fbfaf7; }}
-  .title {{ font: 700 20px -apple-system, BlinkMacSystemFont, sans-serif; fill: #17212b; }}
-  .subtitle, .tick, .legend {{ font: 13px -apple-system, BlinkMacSystemFont, sans-serif; fill: #53606d; }}
+  .title {{ font-family: Arial, sans-serif; font-size: 20px; font-weight: 700; fill: #17212b; }}
+  .subtitle, .tick, .legend {{ font-family: Arial, sans-serif; font-size: 13px; fill: #53606d; }}
   .axis {{ stroke: #8b96a1; stroke-width: 1.2; }}
   .masked {{ fill: none; stroke: #087e8b; stroke-width: 3; }}
   .legacy {{ fill: none; stroke: #d1495b; stroke-width: 3; }}
@@ -340,7 +340,7 @@ def _write_svg(
 {''.join(circles)}
 <text x="{left_b}" y="{top + panel_h + 31}" class="tick">seed {reward_rows[0]["seed"]}</text>
 <text x="{left_b + panel_w}" y="{top + panel_h + 31}" text-anchor="end" class="tick">seed {reward_rows[-1]["seed"]}</text>
-<text x="{left_b}" y="553" class="legend">Each point compares identical shortest-path actions; only turn packing changes.</text>
+<text x="{left_b}" y="553" class="legend">Same shortest-path actions; only turn packing changes.</text>
 </svg>
 """
     path.parent.mkdir(parents=True, exist_ok=True)
