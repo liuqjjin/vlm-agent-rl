@@ -58,7 +58,11 @@ async def run_eval_parallel(
         client=client,
         model=model,
     )
-    base_adapter_factory = lambda **kw: REGISTRY.build_adapter(backend, **{**adapter_kwargs, **kw})
+    def base_adapter_factory(**kwargs):
+        return REGISTRY.build_adapter(
+            backend,
+            **{**adapter_kwargs, **kwargs},
+        )
 
     # Concurrency gates
     episode_gate = asyncio.Semaphore(max(1, max_concurrent_jobs))
@@ -94,6 +98,7 @@ async def run_eval_parallel(
             "tag_id": tag_id,
             "split": data.get("split"),
             "env_name": data.get("env_name"),
+            "observation_ablation": data.get("observation_ablation", "none"),
         }
         episode_metadata = {k: v for k, v in episode_metadata.items() if v is not None}
         episode_metadata["max_turns"] = turn_limit_int
@@ -109,6 +114,7 @@ async def run_eval_parallel(
             dump_enabled=True,  # ignored in workflow; always dump executed episodes
             chat_config=data.get("chat_config") or {},
             concat_multi_turn=data.get("concat_multi_turn", True),
+            observation_ablation=data.get("observation_ablation", "none"),
         )
         async with episode_gate:
             logger.info(

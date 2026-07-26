@@ -1,6 +1,6 @@
 # All comments are in English.
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional
 from PIL import Image
 import os
 import json
@@ -9,6 +9,10 @@ import uuid
 import logging
 
 from vagen.evaluate.adapters.base_adapter import ModelAdapter
+from vagen.evaluate.observation_ablation import (
+    VALID_OBSERVATION_ABLATIONS,
+    ablate_images,
+)
 from vagen.evaluate.utils.mm_utils import _now_tag, extract_images
 from vagen.evaluate.utils.json_utils import sanitize_for_json
 
@@ -36,6 +40,7 @@ class GenericVisionInferenceWorkflow:
         success_threshold: float = 0.99,
         chat_config: Optional[Dict[str, Any]] = None,
         concat_multi_turn: bool = True,
+        observation_ablation: str = "none",
     ):
         self.adapter = adapter
         self.dump_dir = dump_dir
@@ -45,6 +50,12 @@ class GenericVisionInferenceWorkflow:
         self.success_keys = success_keys or ["success", "is_success", "solved"]
         self.success_threshold = success_threshold
         self.chat_config = dict(chat_config or {})
+        if observation_ablation not in VALID_OBSERVATION_ABLATIONS:
+            raise ValueError(
+                f"unknown observation_ablation {observation_ablation!r}; "
+                f"expected one of {sorted(VALID_OBSERVATION_ABLATIONS)}"
+            )
+        self.observation_ablation = observation_ablation
         if self.dump_dir:
             os.makedirs(self.dump_dir, exist_ok=True)
 
@@ -173,11 +184,21 @@ class GenericVisionInferenceWorkflow:
             # Normal execution path (this episode WILL be dumped)
             sys_obs = await env.system_prompt()
             sys_text = sys_obs.get("obs_str", "")
-            sys_imgs = extract_images(sys_obs)
+            sys_imgs = ablate_images(
+                extract_images(sys_obs),
+                mode=self.observation_ablation,
+                seed=seed,
+                turn=-1,
+            )
             messages.append(self.adapter.format_system(sys_text, sys_imgs))
 
             user_text = obs.get("obs_str", "")
-            user_imgs = extract_images(obs)
+            user_imgs = ablate_images(
+                extract_images(obs),
+                mode=self.observation_ablation,
+                seed=seed,
+                turn=0,
+            )
             messages.append(self.adapter.format_user_turn(user_text, user_imgs))
             user_imgs_per_turn.append(user_imgs)
 
@@ -232,7 +253,12 @@ class GenericVisionInferenceWorkflow:
                 infos.append(step_info or {})
 
                 user_text = next_obs.get("obs_str", "")
-                user_imgs = extract_images(next_obs)
+                user_imgs = ablate_images(
+                    extract_images(next_obs),
+                    mode=self.observation_ablation,
+                    seed=seed,
+                    turn=t + 1,
+                )
                 messages.append(self.adapter.format_user_turn(user_text, user_imgs))
                 user_imgs_per_turn.append(user_imgs)
 
@@ -272,6 +298,7 @@ class GenericVisionInferenceWorkflow:
                 "num_turns": len(assistant_texts),
                 "infos": final_infos,
                 "env_config": env_config_dump,
+                "observation_ablation": self.observation_ablation,
             }
             metrics.setdefault("max_turns", turn_limit)
             if error_info is not None:
@@ -323,6 +350,7 @@ class GenericVisionInferenceWorkflow:
                         "num_turns": 0,
                         "infos": (infos or []) + [{"error": repr(e)}],
                         "env_config": env_config_dump,
+                        "observation_ablation": self.observation_ablation,
                         "error_details": {
                             "error": repr(e),
                             "error_type": type(e).__name__,

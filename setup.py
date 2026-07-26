@@ -10,6 +10,7 @@ setup(
         "gymnasium[toy-text]",
         "fastapi>=0.116,<0.117",
         "httpx>=0.28,<0.29",
+        "openai>=1.99,<2",
         "uvicorn<0.41",
     ],
     python_requires=">=3.10",

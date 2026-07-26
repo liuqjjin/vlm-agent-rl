@@ -13,8 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from vagen.evaluate.register_builtins import *  # populate registry
+import vagen.evaluate.register_builtins as _register_builtins  # noqa: F401
 from vagen.envs.registry import get_env_cls
+from vagen.evaluate.observation_ablation import VALID_OBSERVATION_ABLATIONS
 from vagen.evaluate.runner import run_eval_parallel, NORMAL_FINISH_REASONS
 from vagen.evaluate.utils.seeding_utils import generate_seeds_for_spec
 from vagen.evaluate.utils.summary_utils import write_rollouts_summary_from_dump
@@ -40,6 +41,7 @@ class EnvSpec:
     seed_list: Optional[List[int]] = None
     max_turns: Optional[int] = None
     concat_multi_turn: bool = True
+    observation_ablation: str = "none"
 
 
 def _looks_like_path_key(key: str) -> bool:
@@ -107,6 +109,14 @@ def _parse_env_specs(cfg: Dict[str, Any]) -> List[EnvSpec]:
         else:
             chat_cfg = copy.deepcopy(default_chat_cfg)
 
+        observation_ablation = str(item.get("observation_ablation", "none"))
+        if observation_ablation not in VALID_OBSERVATION_ABLATIONS:
+            raise ValueError(
+                f"env '{item.get('name')}' has unknown observation_ablation "
+                f"{observation_ablation!r}; expected one of "
+                f"{sorted(VALID_OBSERVATION_ABLATIONS)}"
+            )
+
         spec = EnvSpec(
             name=str(item["name"]),
             n_envs=int(item["n_envs"]),
@@ -118,6 +128,7 @@ def _parse_env_specs(cfg: Dict[str, Any]) -> List[EnvSpec]:
             seed_list=item.get("seed_list"),
             max_turns=item.get("max_turns"),
             concat_multi_turn=item.get("concat_multi_turn", True),
+            observation_ablation=observation_ablation,
         )
         specs.append(spec)
     return specs
@@ -195,11 +206,13 @@ def _refresh_tag_summaries(dump_dir: Optional[str]) -> None:
             logger.warning("Resume: failed to refresh summary for %s: %s", tag_entry.path, exc)
 
 
-def _collect_completed_runs(dump_dir: Optional[str]) -> Dict[Tuple[str, int, Union[int, str]], str]:
+def _collect_completed_runs(
+    dump_dir: Optional[str],
+) -> Dict[Tuple[str, int, Union[int, str], str], str]:
     """
-    Scan existing rollouts to find completed (success) runs keyed by (env_name, seed, tag_id).
+    Scan completed runs keyed by (env_name, seed, tag_id, visual ablation).
     """
-    completed: Dict[Tuple[str, int, Union[int, str]], str] = {}
+    completed: Dict[Tuple[str, int, Union[int, str], str], str] = {}
     if not dump_dir or not os.path.isdir(dump_dir):
         return completed
 
@@ -240,20 +253,32 @@ def _collect_completed_runs(dump_dir: Optional[str]) -> Dict[Tuple[str, int, Uni
             env_name = (meta_payload or {}).get("env_name") or metrics.get("env_name")
             seed = (meta_payload or {}).get("seed") or metrics.get("seed")
             tag_id = (meta_payload or {}).get("tag_id") or metrics.get("tag_id")
+            observation_ablation = (
+                (meta_payload or {}).get("observation_ablation")
+                or metrics.get("observation_ablation")
+                or "none"
+            )
             if env_name is None or seed is None or tag_id is None:
                 continue
             try:
                 # Keep tag_id as original type (int or str)
                 if not isinstance(tag_id, (int, str)):
                     tag_id = str(tag_id)
-                key = (str(env_name), int(seed), tag_id)
+                key = (
+                    str(env_name),
+                    int(seed),
+                    tag_id,
+                    str(observation_ablation),
+                )
             except (TypeError, ValueError):
                 continue
             completed[key] = "done"
     return completed
 
 
-def _job_resume_key(data: Dict[str, Any]) -> Optional[Tuple[str, int, Union[int, str]]]:
+def _job_resume_key(
+    data: Dict[str, Any],
+) -> Optional[Tuple[str, int, Union[int, str], str]]:
     env_name = data.get("env_name")
     seed = data.get("seed")
     tag_id = data.get("tag_id")
@@ -263,7 +288,12 @@ def _job_resume_key(data: Dict[str, Any]) -> Optional[Tuple[str, int, Union[int,
         # Keep tag_id as original type (int or str)
         if not isinstance(tag_id, (int, str)):
             tag_id = str(tag_id)
-        return (str(env_name), int(seed), tag_id)
+        return (
+            str(env_name),
+            int(seed),
+            tag_id,
+            str(data.get("observation_ablation", "none")),
+        )
     except (TypeError, ValueError):
         return None
 
@@ -298,6 +328,7 @@ def _expand_jobs(
                 "max_turns": job_max_turns,
                 "chat_config": chat_cfg,
                 "concat_multi_turn": spec.concat_multi_turn,
+                "observation_ablation": spec.observation_ablation,
             }
             jobs.append({"data": job_data})
     return jobs
@@ -421,7 +452,7 @@ def main() -> None:
         _purge_error_rollouts(dump_dir, resume_mode)
         _refresh_tag_summaries(dump_dir)
 
-    completed_index: Dict[Tuple[str, int, int], str] = {}
+    completed_index: Dict[Tuple[str, int, Union[int, str], str], str] = {}
     if resume_mode == "skip_completed":
         completed_index = _collect_completed_runs(dump_dir)
         logger.info("Resume: detected %d completed rollouts to skip", len(completed_index))

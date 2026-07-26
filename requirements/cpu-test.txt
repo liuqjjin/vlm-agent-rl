@@ -23,6 +23,7 @@ tqdm==4.67.1
 uvicorn==0.40.0
 fastapi==0.116.1
 httpx==0.28.1
+openai==1.99.9
 pytest==8.4.1
 pytest-asyncio==1.1.0
 ruff==0.12.7
