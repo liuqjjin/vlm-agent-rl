@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
@@ -62,3 +63,22 @@ def test_empty_mask_is_rejected():
     calculate, _ = _implementation()
     with pytest.raises(ValueError, match="no valid response tokens"):
         calculate(torch.zeros(1, 2), torch.zeros(1, 2), torch.zeros(1, 2))
+
+
+def test_parity_report_persists_failed_gate_evidence(tmp_path):
+    from vagen.utils.logprob_parity import write_rollout_train_parity_report
+
+    path = tmp_path / "parity.json"
+    write_rollout_train_parity_report(
+        path,
+        {"ratio_p95": 1.4, "num_tokens": 3},
+        global_step=1,
+        gate_enabled=True,
+        gate_passed=False,
+        thresholds={"max_p95_ratio_deviation": 0.1},
+        error="ratio mismatch",
+    )
+    payload = json.loads(path.read_text())
+    assert payload["gate_passed"] is False
+    assert payload["metrics"]["ratio_p95"] == pytest.approx(1.4)
+    assert payload["error"] == "ratio mismatch"

@@ -63,7 +63,11 @@ from vagen.utils.upload_hugging_face import HFUploadManager
 from vagen.utils.image_validation_logger import ValidationGenerationsLogger
 from vagen.utils.concat_val_multi_turn import concat_val_multi_turn
 from vagen.utils.image_token_utils import replace_image_tokens_for_logging
-from vagen.utils.logprob_parity import calculate_rollout_train_parity, enforce_rollout_train_parity
+from vagen.utils.logprob_parity import (
+    calculate_rollout_train_parity,
+    enforce_rollout_train_parity,
+    write_rollout_train_parity_report,
+)
 import vagen.custom_advantage
 from vagen.custom_metric.metric import METRIC_REGISTRY
 from vagen.custom_filter.filter import FILTER_REGISTRY
@@ -1474,22 +1478,63 @@ class RayPPOTrainer:
                                 metrics.update(
                                     {f"sanity/rollout_train_{key}": value for key, value in parity_metrics.items()}
                                 )
-                                if parity_gate_enabled and self.global_steps == 1:
-                                    enforce_rollout_train_parity(
-                                        parity_metrics,
-                                        max_p95_ratio_deviation=parity_config.get(
-                                            "max_p95_ratio_deviation", 0.1
-                                        ),
-                                        max_p99_ratio_deviation=float(
-                                            parity_config.get("max_p99_ratio_deviation", 0.2)
-                                        ),
-                                        max_mean_abs_logprob_delta=float(
-                                            parity_config.get("max_mean_abs_logprob_delta", 0.05)
-                                        ),
-                                        max_clip_fraction=float(
-                                            parity_config.get("max_clip_fraction", 0.01)
-                                        ),
+                                if self.global_steps == 1:
+                                    parity_error = None
+                                    try:
+                                        if parity_gate_enabled:
+                                            enforce_rollout_train_parity(
+                                                parity_metrics,
+                                                max_p95_ratio_deviation=parity_config.get(
+                                                    "max_p95_ratio_deviation", 0.1
+                                                ),
+                                                max_p99_ratio_deviation=float(
+                                                    parity_config.get(
+                                                        "max_p99_ratio_deviation", 0.2
+                                                    )
+                                                ),
+                                                max_mean_abs_logprob_delta=float(
+                                                    parity_config.get(
+                                                        "max_mean_abs_logprob_delta", 0.05
+                                                    )
+                                                ),
+                                                max_clip_fraction=float(
+                                                    parity_config.get(
+                                                        "max_clip_fraction", 0.01
+                                                    )
+                                                ),
+                                            )
+                                    except RuntimeError as error:
+                                        parity_error = str(error)
+
+                                    parity_report_path = self.config.trainer.get(
+                                        "parity_report_path", None
                                     )
+                                    if parity_report_path:
+                                        write_rollout_train_parity_report(
+                                            parity_report_path,
+                                            parity_metrics,
+                                            global_step=self.global_steps,
+                                            gate_enabled=parity_gate_enabled,
+                                            gate_passed=(
+                                                parity_error is None
+                                                if parity_gate_enabled
+                                                else None
+                                            ),
+                                            thresholds={
+                                                key: parity_config.get(key)
+                                                for key in (
+                                                    "clip_low",
+                                                    "clip_high",
+                                                    "max_p95_ratio_deviation",
+                                                    "max_p99_ratio_deviation",
+                                                    "max_mean_abs_logprob_delta",
+                                                    "max_clip_fraction",
+                                                )
+                                            },
+                                            error=parity_error,
+                                        )
+                                    if parity_error is not None:
+                                        raise RuntimeError(parity_error)
                             elif parity_gate_enabled and self.global_steps == 1:
                                 raise RuntimeError(
                                     "rollout/train parity is enabled, but rollout_log_probs are missing"

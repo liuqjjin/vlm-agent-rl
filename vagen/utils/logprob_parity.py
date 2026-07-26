@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 
 import torch
 
@@ -79,3 +82,28 @@ def enforce_rollout_train_parity(
     if failures:
         raise RuntimeError("rollout/train logprob parity check failed: " + "; ".join(failures))
 
+
+def write_rollout_train_parity_report(
+    path: str | Path,
+    metrics: Mapping[str, float | int],
+    *,
+    global_step: int,
+    gate_enabled: bool,
+    gate_passed: bool | None,
+    thresholds: Mapping[str, Any],
+    error: str | None = None,
+) -> None:
+    """Persist the pre-update parity evidence even when the gate aborts."""
+    report = {
+        "global_step": int(global_step),
+        "gate_enabled": bool(gate_enabled),
+        "gate_passed": gate_passed,
+        "metrics": dict(metrics),
+        "thresholds": dict(thresholds),
+        "error": error,
+    }
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+    )

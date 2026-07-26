@@ -51,6 +51,7 @@ trainer:
     enable: false           # Whether to log environment-rendered images to logger (e.g. wandb)
     max_pending: 2          # Max pending async image dump tasks (prevents IO from blocking training)
     png_compress_level: 0   # PNG compression level (0 = no compression, fastest)
+  parity_report_path: null  # Optional first-update rollout/train parity JSON
 
 # ============================================================================
 # Algorithm Configuration
