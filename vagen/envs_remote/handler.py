@@ -19,7 +19,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from PIL import Image
 
@@ -146,6 +146,7 @@ class BaseGymHandler(ABC):
 
             result_data["obs"] = obs.get("obs_str", "")
             result_data["info"] = info
+            self._copy_observation_metadata(obs, result_data)
 
             images = self._extract_images(obs)
             return HandlerResult(data=result_data, images=images)
@@ -212,6 +213,7 @@ class BaseGymHandler(ABC):
             "obs": obs.get("obs_str", ""),
             "info": info,
         }
+        self._copy_observation_metadata(obs, result_data)
 
         images = self._extract_images(obs)
         return HandlerResult(data=result_data, images=images)
@@ -227,6 +229,7 @@ class BaseGymHandler(ABC):
             "done": done,
             "info": info,
         }
+        self._copy_observation_metadata(obs, result_data)
 
         images = self._extract_images(obs)
         return HandlerResult(data=result_data, images=images)
@@ -247,8 +250,17 @@ class BaseGymHandler(ABC):
         result_data = {
             "obs": obs.get("obs_str", ""),
         }
+        BaseGymHandler._copy_observation_metadata(obs, result_data)
         images = BaseGymHandler._extract_images(obs)
         return HandlerResult(data=result_data, images=images)
+
+    @staticmethod
+    def _copy_observation_metadata(
+        obs: Dict[str, Any], result_data: Dict[str, Any]
+    ) -> None:
+        """Copy environment-agnostic metadata needed by the agent loop."""
+        if "state_anchor" in obs:
+            result_data["state_anchor"] = obs["state_anchor"]
 
     @staticmethod
     def _extract_images(obs: Dict[str, Any]) -> Optional[List[Image.Image]]:

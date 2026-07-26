@@ -44,6 +44,18 @@ from .multipart_codec import encode_multipart, decode_multipart
 LOGGER = logging.getLogger(__name__)
 
 
+def _decode_observation(
+    data: Dict[str, Any], images: Optional[List[Image.Image]]
+) -> Dict[str, Any]:
+    """Restore a GymImageEnv observation from the wire representation."""
+    obs: Dict[str, Any] = {"obs_str": data.get("obs", "")}
+    if "state_anchor" in data:
+        obs["state_anchor"] = data["state_anchor"]
+    if images:
+        obs["multi_modal_input"] = {"<image>": images}
+    return obs
+
+
 class GymImageEnvClient(GymImageEnv):
     """
     Generic HTTP client for remote gym environments.
@@ -233,9 +245,7 @@ class GymImageEnvClient(GymImageEnv):
 
                 # If seed was provided, return reset result
                 if seed is not None and "obs" in data:
-                    obs = {"obs_str": data.get("obs", "")}
-                    if images:
-                        obs["multi_modal_input"] = {"<image>": images}
+                    obs = _decode_observation(data, images)
                     info = data.get("info", {})
                     return obs, info
 
@@ -383,11 +393,7 @@ class GymImageEnvClient(GymImageEnv):
 
         data, images = await self._call("system_prompt")
 
-        obs = {"obs_str": data.get("obs", "")}
-        if images:
-            obs["multi_modal_input"] = {"<image>": images}
-
-        return obs
+        return _decode_observation(data, images)
 
     async def reset(self, seed: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
@@ -406,9 +412,7 @@ class GymImageEnvClient(GymImageEnv):
         # fall back to a separate /call reset.
         data, images = await self._call("reset", params={"seed": seed})
 
-        obs = {"obs_str": data.get("obs", "")}
-        if images:
-            obs["multi_modal_input"] = {"<image>": images}
+        obs = _decode_observation(data, images)
 
         info = data.get("info", {})
 
@@ -424,9 +428,7 @@ class GymImageEnvClient(GymImageEnv):
 
         data, images = await self._call("step", params={"action_str": action_str})
 
-        obs = {"obs_str": data.get("obs", "")}
-        if images:
-            obs["multi_modal_input"] = {"<image>": images}
+        obs = _decode_observation(data, images)
 
         reward = float(data.get("reward", 0.0))
         done = bool(data.get("done", False))

@@ -72,6 +72,33 @@ VALID_EVAL_SETS = [
 ]
 
 
+def navigation_state_anchor(agent: Dict[str, Any]) -> str:
+    """Return a deterministic text key for the pre-action navigation state.
+
+    AI2-THOR reports floating point poses even though this task moves on a
+    discrete action lattice.  Four decimal places preserve all configured
+    moves while removing insignificant simulator noise that would otherwise
+    split equivalent states into singleton groups.
+    """
+
+    def _pose(component: str) -> Dict[str, float]:
+        raw = agent.get(component)
+        if not isinstance(raw, dict):
+            raise ValueError(f"AI2-THOR agent metadata is missing {component!r}")
+        return {
+            axis: round(float(raw.get(axis, 0.0)), 4)
+            for axis in ("x", "y", "z")
+        }
+
+    anchor = {
+        "camera_horizon": round(float(agent.get("cameraHorizon", 0.0)), 4),
+        "position": _pose("position"),
+        "rotation": _pose("rotation"),
+        "standing": bool(agent.get("isStanding", True)),
+    }
+    return json.dumps(anchor, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 # ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
@@ -137,6 +164,9 @@ class NavigationEnv(GymImageEnv):
     def _render_obs(self, init: bool) -> Dict[str, Any]:
         ph = self.cfg.image_placeholder
         img = Image.fromarray(self._controller.last_event.frame.astype(np.uint8))
+        state_anchor = navigation_state_anchor(
+            self._controller.last_event.metadata["agent"]
+        )
         if init:
             fmt = get_format_instruction(self.cfg.prompt_format,
                                          self.cfg.max_actions_per_step, self.cfg.action_sep)
@@ -147,7 +177,11 @@ class NavigationEnv(GymImageEnv):
                 reward=self._reward, done=self._is_success(),
                 env_feedback=self._info.get("env_feedback", ""),
             )
-        return {"obs_str": obs_str, "multi_modal_input": {ph: [img]}}
+        return {
+            "obs_str": obs_str,
+            "multi_modal_input": {ph: [img]},
+            "state_anchor": state_anchor,
+        }
 
     # --- sync methods (run in thread) ---
 
