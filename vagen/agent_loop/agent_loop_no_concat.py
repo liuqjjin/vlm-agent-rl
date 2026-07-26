@@ -461,17 +461,18 @@ class AgentLoopWorkerBase:
                 attention_mask = torch.cat([prompt_output["attention_mask"], response_output["attention_mask"]], dim=1)
                 input_ids = torch.cat([prompt_output["input_ids"], response_output["input_ids"]], dim=1)
 
-                # Handle multi-modal inputs and position_ids calculation
-                # Only support Qwen2VLImageProcessor for multi-modal processing currently
-                # TODO: support other multi-modal inputs
+                # Handle multi-modal inputs and position_ids calculation.
                 multi_modal_inputs = None
+                images = getattr(output, "multi_modal_data", {}).get("image", None)
                 if (
                     self.processor is not None
-                    and "Qwen2VLImageProcessor" in self.processor.image_processor.__class__.__name__
+                    and images
                 ):
+                    from vagen.utils.multimodal_support import require_supported_no_concat_processor
+
+                    require_supported_no_concat_processor(self.processor.image_processor)
                     from verl.models.transformers.qwen2_vl import get_rope_index
 
-                    images = getattr(output, "multi_modal_data", {}).get("image", None)
                     current_text = self.tokenizer.decode(input_ids.squeeze(0), skip_special_tokens=True)
                     multi_modal_inputs = self.processor(text=[current_text], images=images, return_tensors="pt")
                     multi_modal_inputs.pop("input_ids", None)

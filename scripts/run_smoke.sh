@@ -12,6 +12,7 @@ PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" "${PYTHON_BIN}" -m pytest -q \
   vagen/tests/test_value_mask_regression.py \
   vagen/tests/test_no_concat_episode_grpo.py \
   vagen/tests/test_logprob_parity.py \
+  vagen/tests/test_multimodal_support.py \
   vagen/tests/test_state_relative_preflight.py \
   vagen/tests/test_sokoban_reward_bias.py \
   verl/tests/trainer/ppo/test_sparse_value_supervision_on_cpu.py \

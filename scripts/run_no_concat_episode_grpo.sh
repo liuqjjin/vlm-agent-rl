@@ -39,6 +39,11 @@ if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "[ERROR] no-concat Qwen2.5-VL training requires an NVIDIA GPU." >&2
   exit 2
 fi
+if [[ "${MODEL_PATH}" == *"Qwen3-VL"* || "${MODEL_PATH}" == *"Qwen3VL"* ]]; then
+  echo "[ERROR] Qwen3-VL is intentionally blocked for formal no-concat runs." >&2
+  echo "        Its processor/M-RoPE path has not passed rollout/train parity yet." >&2
+  exit 2
+fi
 if (( ROLLOUT_N < 2 )); then
   echo "[ERROR] ROLLOUT_N must be at least 2 for group-relative advantages." >&2
   exit 1
