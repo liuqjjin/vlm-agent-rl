@@ -60,6 +60,10 @@ Token, turn, and trajectory weighting assign different mass when turns and traje
 
 **Evidence:** visual Sokoban has an exact grid state; Navigation exposes an exact simulator pose. Both can provide a text grouping key while the policy continues to consume pixels. `group_idx` scopes the comparison to the same task. The preflight measures singleton groups, comparable rows, action diversity, and return-to-go variance.
 
+Action diversity is computed from normalized `<answer>`/`<action>` contents,
+not the surrounding reasoning text, so paraphrased thoughts cannot manufacture
+a state-relative comparison signal.
+
 **Stop rule:** if real base-policy rollouts fail any configured signal threshold, record a negative result and do not spend training GPU-hours on this direction.
 
 **Reference implementation studied:** [verl-agent](https://github.com/langfengQ/verl-agent) at the commit recorded in `UPSTREAM.md`. **Research reference:** [GiGPO](https://arxiv.org/abs/2505.10978).
@@ -112,3 +116,9 @@ The episode-weighted method is restricted to one GPU. Its microbatch
 invariance is tested, but an equivalent cross-rank scaling proof has not yet
 been established. Phase-specific run names prevent screening and confirmatory
 artifacts from silently resuming into or overwriting one another.
+Within a phase, automatic training resume is allowed only when the complete
+existing manifest matches; evaluation skips already-completed episode
+identities under the same rule. A changed commit or configuration requires a
+new experiment directory. Fully complete runs are skipped, while parity-failed
+or GPU-sampling-tainted runs require a new directory instead of overwriting
+negative evidence.

@@ -51,12 +51,39 @@ if [[ "${RUN_LOCAL_EVAL:-1}" == "1" ]]; then
     bash scripts/run_visual_eval.sh
 fi
 
-ENVIRONMENT="${SMOKE_ENVIRONMENT:-sokoban}" \
+SMOKE_ENVIRONMENT_VALUE="${SMOKE_ENVIRONMENT:-sokoban}"
+SMOKE_BATCH_SIZE_VALUE="${SMOKE_BATCH_SIZE:-2}"
+
+if [[ "${RUN_CORE_METHOD_SMOKES:-1}" == "1" ]]; then
+  METHOD=concat_grpo \
+  ENVIRONMENT="${SMOKE_ENVIRONMENT_VALUE}" \
+  TOTAL_STEPS="${SMOKE_CORE_STEPS:-1}" \
+  TRAIN_BATCH_SIZE="${SMOKE_BATCH_SIZE_VALUE}" \
+  ROLLOUT_N="${SMOKE_ROLLOUT_N:-2}" \
+  VAL_BEFORE_TRAIN=False \
+  TEST_FREQ=-1 \
+  SAVE_FREQ=-1 \
+  EXPERIMENT_NAME="${SMOKE_ENVIRONMENT_VALUE}_concat_grpo_smoke" \
+    bash scripts/run_training_method.sh
+
+  METHOD=no_concat_gae \
+  ENVIRONMENT="${SMOKE_ENVIRONMENT_VALUE}" \
+  TOTAL_STEPS="${SMOKE_CORE_STEPS:-1}" \
+  TRAIN_BATCH_SIZE="${SMOKE_BATCH_SIZE_VALUE}" \
+  ROLLOUT_N=1 \
+  VAL_BEFORE_TRAIN=False \
+  TEST_FREQ=-1 \
+  SAVE_FREQ=-1 \
+  EXPERIMENT_NAME="${SMOKE_ENVIRONMENT_VALUE}_no_concat_gae_smoke" \
+    bash scripts/run_training_method.sh
+fi
+
+ENVIRONMENT="${SMOKE_ENVIRONMENT_VALUE}" \
 TOTAL_STEPS="${SMOKE_STEPS:-5}" \
-TRAIN_BATCH_SIZE="${SMOKE_BATCH_SIZE:-2}" \
+TRAIN_BATCH_SIZE="${SMOKE_BATCH_SIZE_VALUE}" \
 ROLLOUT_N="${SMOKE_ROLLOUT_N:-2}" \
 VAL_BEFORE_TRAIN=False \
 TEST_FREQ=-1 \
 SAVE_FREQ=-1 \
-EXPERIMENT_NAME="${SMOKE_ENVIRONMENT:-sokoban}_episode_grpo_smoke" \
+EXPERIMENT_NAME="${SMOKE_ENVIRONMENT_VALUE}_episode_grpo_smoke" \
 bash scripts/run_no_concat_episode_grpo.sh

@@ -10,9 +10,10 @@ from vagen.analysis.analyze_rollouts import (
     build_result_row,
     collect_evaluation_episodes,
 )
+from vagen.utils.run_manifest import classify_run_for_resume
 
 
-def _write_episode(root, name, *, success, turns, reward, valid):
+def _write_episode(root, name, *, success, turns, reward, valid, tag="answer"):
     folder = root / "tag_test" / name
     folder.mkdir(parents=True)
     metrics = {
@@ -31,7 +32,7 @@ def _write_episode(root, name, *, success, turns, reward, valid):
     }
     (folder / "metrics.json").write_text(json.dumps(metrics))
     (folder / "assistant_texts.json").write_text(
-        json.dumps(["<answer>right</answer>"] * turns)
+        json.dumps([f"<{tag}>right</{tag}>"] * turns)
     )
     (folder / "transcript.txt").write_text("synthetic")
 
@@ -52,6 +53,7 @@ def test_evaluation_analysis_reports_failure_and_action_quality(tmp_path):
         turns=4,
         reward=0.4,
         valid=[True, False, False, True],
+        tag="action",
     )
     episodes = collect_evaluation_episodes(tmp_path)
     report = analyze_evaluation_episodes(episodes)
@@ -124,6 +126,13 @@ def test_result_row_keeps_missing_gpu_and_parity_metrics_null(tmp_path):
     assert row["Ratio P95"] is None
     assert row["Status"] == "incomplete-artifacts"
 
+    manifest_only = tmp_path / "manifest_only"
+    manifest_only.mkdir()
+    (manifest_only / "manifest.json").write_text(
+        json.dumps({"method": "base"})
+    )
+    assert build_result_row(manifest_only)["Status"] == "incomplete-artifacts"
+
 
 def test_result_row_requires_expected_episode_count_and_provenance(tmp_path):
     (tmp_path / "manifest.json").write_text(
@@ -165,10 +174,91 @@ def test_result_row_requires_expected_episode_count_and_provenance(tmp_path):
     row = build_result_row(tmp_path)
 
     assert row["Status"] == "complete"
+    assert classify_run_for_resume(tmp_path) == "complete"
     assert row["Visual Success"] == pytest.approx(1.0)
     assert row["Peak VRAM"] == pytest.approx(100.0)
+
+    gpu_summary_path = gpu_dir / "gpu_summary.json"
+    gpu_summary = json.loads(gpu_summary_path.read_text())
+    gpu_summary["sampling_errors"] = ["nvidia-smi timeout"]
+    gpu_summary_path.write_text(json.dumps(gpu_summary))
+    assert build_result_row(tmp_path)["Status"] == "incomplete-artifacts"
+    assert classify_run_for_resume(tmp_path) == "tainted-gpu-metrics"
+    gpu_summary["sampling_errors"] = []
+    gpu_summary_path.write_text(json.dumps(gpu_summary))
+
+    metrics_path = next(tmp_path.rglob("metrics.json"))
+    metrics = json.loads(metrics_path.read_text())
+    metrics["finish_reason"] = "model_error"
+    metrics_path.write_text(json.dumps(metrics))
+    assert build_result_row(tmp_path)["Status"] == "failed"
+    metrics["finish_reason"] = "done"
+    metrics_path.write_text(json.dumps(metrics))
 
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     manifest["git_dirty"] = True
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
     assert build_result_row(tmp_path)["Status"] == "incomplete-artifacts"
+
+
+def test_result_row_preserves_a_failed_parity_attempt_across_resume(tmp_path):
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "method": "no_concat_grpo",
+                "environment": "sokoban",
+                "seed": 1,
+                "total_steps": 1,
+                "advantage_estimator": "grpo",
+                "commit": "parent",
+                "verl_commit": "submodule",
+                "git_dirty": False,
+            }
+        )
+    )
+    (tmp_path / "train_command.sh").write_text("true\n")
+    (tmp_path / "resolved_config.yaml").write_text("resolved\n")
+    rollouts = tmp_path / "rollouts"
+    rollouts.mkdir()
+    (rollouts / "1.jsonl").write_text(
+        json.dumps(
+            {
+                "group_idx": "g",
+                "traj_idx": 0,
+                "turn_idx": 1,
+                "score": 1.0,
+                "last_turn": True,
+                "traj_success": 1.0,
+            }
+        )
+        + "\n"
+    )
+    gpu_dir = tmp_path / "gpu_metrics"
+    gpu_dir.mkdir()
+    (gpu_dir / "gpu_summary.json").write_text(
+        json.dumps(
+            {
+                "return_code": 0,
+                "sample_count": 1,
+                "peak_vram_mib": 100.0,
+                "gpu_hours": 0.1,
+            }
+        )
+    )
+    (tmp_path / "parity.json").write_text(
+        json.dumps(
+            {
+                "global_step": 1,
+                "gate_enabled": True,
+                "gate_passed": True,
+                "metrics": {"ratio_p95": 1.0},
+                "attempts": [
+                    {"global_step": 1, "gate_passed": False},
+                    {"global_step": 1, "gate_passed": True},
+                ],
+            }
+        )
+    )
+
+    assert build_result_row(tmp_path)["Status"] == "failed"
+    assert classify_run_for_resume(tmp_path) == "failed-parity"

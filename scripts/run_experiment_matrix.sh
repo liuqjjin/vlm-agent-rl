@@ -113,7 +113,7 @@ case "${PHASE}" in
     done
     ;;
   core-screening)
-    IFS=',' read -r -a environments <<< "${ENVIRONMENTS:-sokoban}"
+    IFS=',' read -r -a environments <<< "${ENVIRONMENTS:-sokoban,navigation}"
     IFS=',' read -r -a methods <<< "${METHODS:-concat_grpo,no_concat_gae,no_concat_episode_grpo}"
     for environment in "${environments[@]}"; do
       for method in "${methods[@]}"; do

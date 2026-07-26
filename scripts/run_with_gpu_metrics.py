@@ -97,6 +97,68 @@ def sample_gpus(
     return parse_nvidia_smi_rows(result.stdout, elapsed_seconds)
 
 
+def validate_sampled_device_count(
+    samples: list[dict[str, Any]],
+    expected_device_count: int,
+) -> None:
+    """Reject resource accounting that includes too few or too many GPUs."""
+    if expected_device_count <= 0:
+        raise ValueError("expected_device_count must be positive")
+    sampled_devices = {int(row["gpu_index"]) for row in samples}
+    if len(sampled_devices) != expected_device_count:
+        raise RuntimeError(
+            "GPU visibility does not match the declared run: "
+            f"sampled {len(sampled_devices)} devices "
+            f"{sorted(sampled_devices)}, expected {expected_device_count}. "
+            "Set CUDA_VISIBLE_DEVICES to exactly the GPUs used by the run."
+        )
+
+
+def merge_session_samples(
+    prior_samples: list[dict[str, Any]],
+    session_samples: list[dict[str, Any]],
+    *,
+    prior_duration_seconds: float,
+) -> list[dict[str, Any]]:
+    """Append one session on a continuous active-runtime time axis."""
+    if prior_duration_seconds < 0:
+        raise ValueError("prior_duration_seconds must be non-negative")
+
+    def inventory(
+        rows: list[dict[str, Any]],
+    ) -> set[tuple[int, str, float]]:
+        return {
+            (
+                int(row["gpu_index"]),
+                str(row["gpu_name"]),
+                float(row["memory_total_mib"]),
+            )
+            for row in rows
+        }
+
+    prior_inventory = inventory(prior_samples)
+    session_inventory = inventory(session_samples)
+    if (
+        prior_inventory
+        and session_inventory
+        and prior_inventory != session_inventory
+    ):
+        raise RuntimeError(
+            "cannot merge GPU sessions with different device inventories: "
+            f"{sorted(prior_inventory)} vs {sorted(session_inventory)}"
+        )
+    shifted = [
+        {
+            **row,
+            "elapsed_seconds": (
+                float(row["elapsed_seconds"]) + prior_duration_seconds
+            ),
+        }
+        for row in session_samples
+    ]
+    return [*prior_samples, *shifted]
+
+
 def summarize_samples(
     samples: list[dict[str, Any]],
     *,
@@ -185,10 +247,31 @@ def _write_samples(path: Path, samples: list[dict[str, Any]]) -> None:
         writer.writerows(samples)
 
 
+def _read_samples(path: Path) -> list[dict[str, Any]]:
+    with path.open(newline="") as handle:
+        rows = []
+        for row in csv.DictReader(handle):
+            rows.append(
+                {
+                    "elapsed_seconds": float(row["elapsed_seconds"]),
+                    "gpu_index": int(row["gpu_index"]),
+                    "gpu_name": row["gpu_name"],
+                    "memory_used_mib": float(row["memory_used_mib"]),
+                    "memory_total_mib": float(row["memory_total_mib"]),
+                    "utilization_percent": _optional_float(
+                        row["utilization_percent"]
+                    ),
+                    "power_watts": _optional_float(row["power_watts"]),
+                }
+            )
+    return rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--interval", type=float, default=5.0)
+    parser.add_argument("--expected-device-count", type=int)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -196,19 +279,76 @@ def main() -> int:
         parser.error("a command is required after --")
     if args.interval <= 0:
         parser.error("--interval must be positive")
+    if args.expected_device_count is not None and args.expected_device_count <= 0:
+        parser.error("--expected-device-count must be positive")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     visible_devices_raw = os.environ.get("CUDA_VISIBLE_DEVICES")
     device_selectors = parse_visible_devices(visible_devices_raw)
+    summary_path = args.output_dir / "gpu_summary.json"
+    samples_path = args.output_dir / "gpu_samples.csv"
+    if summary_path.exists() != samples_path.exists():
+        parser.error(
+            "existing GPU metrics are incomplete; use a new output directory"
+        )
+
+    prior_summary: dict[str, Any] = {}
+    prior_samples: list[dict[str, Any]] = []
+    prior_duration = 0.0
+    if summary_path.exists():
+        try:
+            prior_summary = json.loads(summary_path.read_text())
+            if not isinstance(prior_summary, dict):
+                raise ValueError("GPU summary must be a JSON object")
+            prior_samples = _read_samples(samples_path)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+            parser.error(f"existing GPU metrics are unreadable: {error}")
+        identity = {
+            "command": command,
+            "cuda_visible_devices": visible_devices_raw,
+            "sampled_device_selectors": device_selectors,
+            "expected_device_count": args.expected_device_count,
+            "sampling_interval_seconds": args.interval,
+        }
+        mismatches = {
+            key: {
+                "existing": prior_summary.get(key),
+                "requested": value,
+            }
+            for key, value in identity.items()
+            if prior_summary.get(key) != value
+        }
+        if mismatches:
+            parser.error(
+                "existing GPU metrics belong to another run; "
+                f"use a new output directory. Differences: {mismatches}"
+            )
+        prior_duration = float(
+            prior_summary.get("duration_seconds", 0.0) or 0.0
+        )
+        if prior_duration < 0:
+            parser.error("existing GPU duration is negative")
+
+    session_samples: list[dict[str, Any]] = []
+    if args.expected_device_count is not None:
+        try:
+            session_samples = sample_gpus(0.0, device_selectors)
+            validate_sampled_device_count(
+                session_samples,
+                args.expected_device_count,
+            )
+        except Exception as error:
+            parser.error(str(error))
     start = time.monotonic()
     process = subprocess.Popen(command)
-    samples: list[dict[str, Any]] = []
     sample_errors: list[str] = []
 
     while process.poll() is None:
         elapsed = time.monotonic() - start
         try:
-            samples.extend(sample_gpus(elapsed, device_selectors))
+            session_samples.extend(
+                sample_gpus(elapsed, device_selectors)
+            )
         except Exception as error:
             sample_errors.append(repr(error))
         try:
@@ -218,23 +358,59 @@ def main() -> int:
 
     duration = time.monotonic() - start
     try:
-        samples.extend(sample_gpus(duration, device_selectors))
+        session_samples.extend(sample_gpus(duration, device_selectors))
     except Exception as error:
         sample_errors.append(repr(error))
 
-    _write_samples(args.output_dir / "gpu_samples.csv", samples)
-    summary = summarize_samples(samples, duration_seconds=duration)
+    try:
+        samples = merge_session_samples(
+            prior_samples,
+            session_samples,
+            prior_duration_seconds=prior_duration,
+        )
+    except Exception as error:
+        parser.error(str(error))
+    total_duration = prior_duration + duration
+    _write_samples(samples_path, samples)
+    summary = summarize_samples(
+        samples,
+        duration_seconds=total_duration,
+    )
+    previous_durations = prior_summary.get("session_durations_seconds")
+    if not isinstance(previous_durations, list):
+        previous_durations = [prior_duration] if prior_summary else []
+    previous_return_codes = prior_summary.get("session_return_codes")
+    if not isinstance(previous_return_codes, list):
+        previous_return_codes = (
+            [prior_summary.get("return_code")] if prior_summary else []
+        )
+    previous_errors = prior_summary.get("sampling_errors")
+    if not isinstance(previous_errors, list):
+        previous_errors = []
     summary.update(
         {
             "command": command,
             "return_code": process.returncode,
             "sampling_interval_seconds": args.interval,
-            "sampling_errors": sample_errors,
+            "sampling_errors": [*previous_errors, *sample_errors],
             "cuda_visible_devices": visible_devices_raw,
             "sampled_device_selectors": device_selectors,
+            "expected_device_count": args.expected_device_count,
+            "session_count": int(
+                prior_summary.get("session_count", 1 if prior_summary else 0)
+            )
+            + 1,
+            "session_durations_seconds": [
+                *previous_durations,
+                duration,
+            ],
+            "session_return_codes": [
+                *previous_return_codes,
+                process.returncode,
+            ],
         }
     )
-    (args.output_dir / "gpu_summary.json").write_text(
+    summary_path.write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n"
     )
     print(

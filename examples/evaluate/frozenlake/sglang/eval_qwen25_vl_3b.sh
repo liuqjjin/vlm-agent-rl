@@ -65,7 +65,7 @@ fi
   --tp "${TP_SIZE}" \
   --trust-remote-code \
   --mem-fraction-static "${MEM_FRACTION}" \
-  >"${SERVER_LOG}" 2>&1 &
+  >>"${SERVER_LOG}" 2>&1 &
 SERVER_PID=$!
 
 # ---------- Cleanup ----------
@@ -84,4 +84,4 @@ wait_for_server
 "${PYTHON_BIN}" -m vagen.evaluate.run_eval --config "${CONFIG}" \
   "${EVAL_OVERRIDES[@]}" \
   "$@" \
-  2>&1 | tee "${EVAL_LOG}"
+  2>&1 | tee -a "${EVAL_LOG}"

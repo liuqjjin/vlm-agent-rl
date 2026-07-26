@@ -25,7 +25,7 @@ The local machine is Apple arm64 without CUDA. All CPU-valid experiments were ru
 
 | CPU check | Observed result | Raw evidence |
 |---|---:|---|
-| Full CPU smoke | 97 tests passed | `scripts/run_smoke.sh` |
+| Full CPU smoke | 104 tests passed | `scripts/run_smoke.sh` |
 | Ignored critic value after 20 updates | fixed `0.500`; legacy `-87.782` | [value_mask_steps.csv](results/cpu/20260727-mac-arm64/raw/value_mask_steps.csv) |
 | Supervised critic value after 20 updates | `1.965` toward target `2.0` | [summary.json](results/cpu/20260727-mac-arm64/summary.json) |
 | Extra reward from splitting the same shortest path | mean `+0.245`; positive on 20/20 seeds | [sokoban_reward_pairs.csv](results/cpu/20260727-mac-arm64/raw/sokoban_reward_pairs.csv) |

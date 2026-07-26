@@ -72,8 +72,24 @@ def test_state_relative_preflight_proceeds_only_with_comparable_signal():
 
 def test_state_relative_preflight_stops_on_collapsed_actions_and_returns():
     rows = [
-        _row("g", 0, 1, "same\n[remaining_turns=2]", "left", 0.0, True),
-        _row("g", 1, 1, "same\n[remaining_turns=2]", "left", 0.0, True),
+        _row(
+            "g",
+            0,
+            1,
+            "same\n[remaining_turns=2]",
+            "<think>first rationale</think><action>move_left</action>",
+            0.0,
+            True,
+        ),
+        _row(
+            "g",
+            1,
+            1,
+            "same\n[remaining_turns=2]",
+            "<think>different rationale</think><action>move_left</action>",
+            0.0,
+            True,
+        ),
     ]
     report = analyze_state_relative_rows(
         rows,

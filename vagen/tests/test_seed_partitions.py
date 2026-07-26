@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 import pytest
@@ -96,3 +97,46 @@ def test_formal_evaluation_seeds_are_held_out_from_training(
 def test_training_seed_list_accepts_exact_declared_count() -> None:
     spec = EnvSpec(name="test", n_envs=3, seed_list=[7, 8, 9])
     assert _generate_seeds_for_spec(spec, base_seed=0, spec_idx=0) == [7, 8, 9]
+
+
+def test_pending_result_registry_matches_the_experiment_matrix() -> None:
+    matrix = OmegaConf.load(ROOT / "experiments/matrix.yaml")
+    with (ROOT / "results/main_results.csv").open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+
+    expected_columns = {
+        "Method",
+        "Visual Success",
+        "Peak VRAM",
+        "GPU·h",
+        "Mean Turns",
+        "Ratio P95",
+        "Status",
+        "Environment",
+        "Seed",
+        "Commit",
+        "Evidence",
+    }
+    assert set(reader.fieldnames or []) == expected_columns
+    base_rows = {
+        str(row["Environment"]).lower(): row
+        for row in rows
+        if row["Method"] == "Base Qwen2.5-VL-3B"
+    }
+    for environment in ("sokoban", "navigation"):
+        declared = list(matrix.environments[environment].evaluation_seeds)
+        row = base_rows[environment]
+        assert row["Seed"] == f"{declared[0]}:{declared[1]}"
+
+    for row in rows:
+        assert row["Status"] == "pending-external-gpu"
+        assert row["Commit"] == ""
+        for metric in (
+            "Visual Success",
+            "Peak VRAM",
+            "GPU·h",
+            "Mean Turns",
+            "Ratio P95",
+        ):
+            assert row[metric] == ""

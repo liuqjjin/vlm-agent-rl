@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -24,6 +25,11 @@ DEFAULT_THRESHOLDS = {
     "min_mean_return_to_go_variance": 1e-4,
 }
 
+ACTION_PATTERN = re.compile(
+    r"<(?P<tag>answer|action)\b[^>]*>(?P<body>.*?)</(?P=tag)>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
 
 def _id(value: Any) -> tuple[str, str]:
     if isinstance(value, np.generic):
@@ -32,7 +38,11 @@ def _id(value: Any) -> tuple[str, str]:
 
 
 def _normalized_action(value: Any) -> str:
-    return " ".join(str(value or "").strip().lower().split())
+    text = str(value or "")
+    match = ACTION_PATTERN.search(text)
+    if match:
+        text = match.group("body")
+    return " ".join(text.strip().lower().split())
 
 
 def _deduplicate(rows: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
@@ -172,4 +182,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

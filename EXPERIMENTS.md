@@ -70,7 +70,7 @@ conda run -n vagen bash scripts/run_smoke.sh
 
 This covers trajectory reconstruction, incomplete groups, duplicates, zero variance, critic masks, 20-step dynamics, objective weights, microbatch invariance, parity metrics/reporting, processor guard, deterministic environment seeding, state anchors, remote transport, observation ablation, GPU metric parsing, and rollout analysis.
 
-Current result: **97 passed**.
+Current result: **104 passed**.
 
 ### 2. GPU smoke
 
@@ -82,9 +82,13 @@ Order:
 
 1. FrozenLake Qwen2.5-VL-3B local SGLang visual evaluation;
 2. Sokoban Qwen2.5-VL-3B local SGLang visual evaluation;
-3. five no-concat episode-GRPO updates.
+3. one concat-GRPO update;
+4. one fixed no-concat-GAE update, including the critic;
+5. five no-concat episode-GRPO updates.
 
 The default OpenAI Sokoban evaluator is not accepted as the local baseline.
+The one-step core method runs are configuration, parity, and peak-memory
+checks, not behavioral experiments.
 
 The smoke passes only if the first-update parity gate passes. A failed gate stops before the first actor update.
 
@@ -102,7 +106,9 @@ This runs the same local Qwen2.5-VL-3B server interface on Sokoban and Navigatio
 bash scripts/run_experiment_matrix.sh core-screening
 ```
 
-Default: three trained core methods, Sokoban, seed 0, 50 updates. This phase is for fatal instability, parity, memory, throughput, reward-variance, and coarse success screening—not final claims.
+Default: all three trained core methods on both Sokoban and Navigation, seed 0,
+50 updates. This phase is for fatal instability, parity, memory, throughput,
+reward-variance, and coarse success screening—not final claims.
 
 ### 5. Episode-objective screening
 
@@ -229,6 +235,11 @@ Required report:
 - number of valid action tokens.
 
 Default abort thresholds are recorded in the run manifest/config and in `parity.json`.
+The report retains an append-only `attempts` history inside the run directory.
+If any resumed attempt fails the gate, result analysis keeps the run failed even
+when a later retry passes; use a new run directory for a clean replacement run.
+The entry point skips runs already classified complete and refuses to reuse a
+parity-failed directory.
 
 ### Resources
 
@@ -242,6 +253,10 @@ Default abort thresholds are recorded in the run manifest/config and in `parity.
 - trapezoidal power-based energy estimate.
 
 GPU-hours describe occupied devices, not normalized accelerator-equivalent compute.
+The wrapper checks the sampled device count against training `N_GPUS` or
+evaluation `DP_SIZE × TP_SIZE` before launching.
+Resumed accounting requires the same device inventory, and a sampling error
+keeps the result incomplete rather than silently understating peak memory.
 If GPU sampling never succeeds, GPU-hours and peak VRAM remain null rather than
 being reported as zero.
 
@@ -268,7 +283,11 @@ Every non-null row must be traceable to:
 The analyzer marks a row `complete` only when the declared episode count (or
 final training step), clean source provenance, both commits, nonempty replay
 command and resolved config, valid GPU samples, and—where applicable—a passed
-parity gate are all present. Partial or failed runs remain explicitly labeled.
+parity gate are all present. Any model/environment error episode marks the
+evaluation failed rather than turning infrastructure failure into a behavioral
+zero. The evaluator also exits nonzero after persisting such episodes, so the
+experiment matrix cannot silently advance. Partial or failed runs remain
+explicitly labeled.
 
 ## Completed CPU results
 

@@ -50,6 +50,7 @@ jobs:
             vagen/evaluate/run_eval.py \
             vagen/ray_trainer.py \
             vagen/utils/logprob_parity.py \
+            vagen/utils/run_manifest.py \
             vagen/utils/state_anchor.py \
             vagen/tests/test_experiment_entrypoints.py \
             vagen/tests/test_gpu_metrics.py \

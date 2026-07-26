@@ -182,6 +182,18 @@ Every training run writes:
 - `gpu_metrics/gpu_summary.json`;
 - checkpoints according to the phase.
 
+The metrics wrapper verifies that the sampled visible-device count matches the
+run's declared training GPU count or evaluation `DP_SIZE × TP_SIZE`; it refuses
+to launch when accounting would include an unused visible GPU.
+When a manifest-compatible run resumes, raw samples and active session
+durations are appended on a continuous runtime axis, so GPU-hours include every
+attempt without charging the instance's offline gap. Resume also requires the
+same device index, model name, and total memory inventory; any sampling error
+keeps the analyzed result incomplete.
+An identity-matched complete run is skipped before another process starts.
+Parity-failed or sampling-tainted directories are immutable negative evidence;
+a replacement attempt must use a new run directory.
+
 The manifest distinguishes the controlled run seed (Python hashing and
 dataloader order) from bitwise CUDA determinism, which the asynchronous
 rollout stack does not promise.

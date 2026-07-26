@@ -27,6 +27,18 @@ if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
 
+def _failed_evaluation_results(
+    results: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return infrastructure failures that must make a formal eval nonzero."""
+    return [
+        result
+        for result in results
+        if result.get("error")
+        or result.get("finish_reason") not in NORMAL_FINISH_REASONS
+    ]
+
+
 @dataclass
 class EnvSpec:
     """Configuration for one logical environment family."""
@@ -553,6 +565,22 @@ def main() -> None:
                 json.dump(summary_payload, f, ensure_ascii=False, indent=2)
             print(f"[Error details appended] {outp}")
         print(f"[Summary written] {outp}")
+
+    failed_results = _failed_evaluation_results(results)
+    if failed_results:
+        examples = [
+            {
+                "rollout_id": result.get("rollout_id"),
+                "seed": result.get("seed"),
+                "finish_reason": result.get("finish_reason"),
+                "error": result.get("error"),
+            }
+            for result in failed_results[:3]
+        ]
+        raise RuntimeError(
+            f"{len(failed_results)} evaluation episode(s) failed; "
+            f"examples={examples}"
+        )
 
 
 if __name__ == "__main__":

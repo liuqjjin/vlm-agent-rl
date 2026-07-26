@@ -8,14 +8,26 @@ not moving branch names, define the implementation reviewed for this project.
 | Component | Role | Repository | Audited branch | Audited commit | License |
 |---|---|---|---|---|---|
 | VAGEN | Top-level framework and environment loop | [mll-lab-nu/VAGEN](https://github.com/mll-lab-nu/VAGEN) | `main` | [`2936322a6f6c02fbd29ca28e4b6ec37eefefc081`](https://github.com/mll-lab-nu/VAGEN/commit/2936322a6f6c02fbd29ca28e4b6ec37eefefc081) | MIT |
+| VAGEN historical no-concat line | Rename/history audit only; not a separate dependency | [mll-lab-nu/VAGEN](https://github.com/mll-lab-nu/VAGEN) | `vagen-lite` | [`527c82de00a44a0b07327676d5c55d9bf77d0f82`](https://github.com/mll-lab-nu/VAGEN/commit/527c82de00a44a0b07327676d5c55d9bf77d0f82) | MIT |
 | VAGEN verl fork | Ray/FSDP/SGLang/PPO submodule base | [JamesKrW/verl](https://github.com/JamesKrW/verl) | `vagen-lite` | [`3fe0a29975e1b02ae2bd1dec249f7807dd7966f5`](https://github.com/JamesKrW/verl/commit/3fe0a29975e1b02ae2bd1dec249f7807dd7966f5) | Apache-2.0 |
 | Local verl delta | Sparse critic mask and policy weights | [liuqjjin/verl](https://github.com/liuqjjin/verl) | `vagen-value-mask-policy-weights` | [`fecc1520af10cf266ba1947c6b3b9bd5259fe926`](https://github.com/liuqjjin/verl/commit/fecc1520af10cf266ba1947c6b3b9bd5259fe926) | Apache-2.0 |
 | verl-agent | Read-only GiGPO/state-grouping design reference | [langfengQ/verl-agent](https://github.com/langfengQ/verl-agent) | `master` | [`20bd331bdbc9026a5668e11362178e10ab7400c8`](https://github.com/langfengQ/verl-agent/commit/20bd331bdbc9026a5668e11362178e10ab7400c8) | Apache-2.0 |
 
-At audit time, `git ls-remote` returned the VAGEN, JamesKrW/verl, and
-verl-agent commits above as the heads of their recorded branches. The
-verl-agent checkout was kept outside this repository, was not installed into
-the VAGEN environment, and contributed no copied source.
+At audit time, `git ls-remote` returned both recorded VAGEN heads, the
+JamesKrW/verl head, and the verl-agent head above. The verl-agent checkout was
+kept outside this repository, was not installed into the VAGEN environment,
+and contributed no copied source.
+
+## Historical `vagen-lite` finding
+
+VAGEN `vagen-lite` is the merge base of the audited `main`, not a fourth
+runtime component. It registered the first-token sparse estimator as
+`no_concat_gae_first`, and the trainer attached `value_mask` for that legacy
+name. Later `main` renamed the registered estimator to `no_concat_gae` while
+the trainer condition still listed only the two historical names. Comparing
+these exact branch heads identified the first value-mask break; the second was
+the pinned verl critic worker dropping the optional field during batch
+selection.
 
 ## Local changes relative to VAGEN
 

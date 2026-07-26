@@ -141,7 +141,7 @@ def write_rollout_train_parity_report(
     error: str | None = None,
 ) -> None:
     """Persist the pre-update parity evidence even when the gate aborts."""
-    report = {
+    attempt = {
         "global_step": int(global_step),
         "gate_enabled": bool(gate_enabled),
         "gate_passed": gate_passed,
@@ -151,6 +151,43 @@ def write_rollout_train_parity_report(
     }
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    attempts: list[dict[str, Any]] = []
+    if destination.exists():
+        try:
+            previous = json.loads(destination.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"cannot append parity evidence to unreadable report: {destination}"
+            ) from exc
+        if not isinstance(previous, dict):
+            raise ValueError(
+                f"cannot append parity evidence to non-object report: {destination}"
+            )
+        prior_attempts = previous.get("attempts")
+        if prior_attempts is not None:
+            if not isinstance(prior_attempts, list) or not all(
+                isinstance(item, dict) for item in prior_attempts
+            ):
+                raise ValueError(
+                    f"cannot append parity evidence to malformed history: {destination}"
+                )
+            attempts = list(prior_attempts)
+        elif "global_step" in previous:
+            attempts = [
+                {
+                    key: previous.get(key)
+                    for key in (
+                        "global_step",
+                        "gate_enabled",
+                        "gate_passed",
+                        "metrics",
+                        "thresholds",
+                        "error",
+                    )
+                }
+            ]
+    attempts.append(attempt)
+    report = {**attempt, "attempts": attempts}
     destination.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n"
     )

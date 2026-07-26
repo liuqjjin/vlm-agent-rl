@@ -24,7 +24,8 @@ That is all the external interaction required. Login, payment, verification code
 - Qwen2.5-VL-3B uses LoRA, 50% inference-engine allocation, and
   parameter/optimizer offload; 48 GiB is the lowest credible first attempt.
   The fixed no-concat GAE comparison also holds a critic and is the
-  memory-risk condition, so the smoke decides whether 80 GiB is necessary.
+  memory-risk condition, and the smoke now executes that exact path before
+  screening, so it decides whether 80 GiB is necessary.
 - AI2-THOR Navigation runs a Unity renderer alongside model inference, which is
   why 24 GiB cards are not the formal default even if episode-only inference
   might start on one.

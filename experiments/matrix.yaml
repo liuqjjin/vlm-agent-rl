@@ -44,12 +44,13 @@ environments:
 funnel:
   smoke:
     steps: 5
+    core_method_steps: 1
     train_batch_size: 2
     rollout_n: 2
     evaluation_episodes: 4
   core_screening:
     methods: [concat_grpo, no_concat_gae, no_concat_episode_grpo]
-    environments: [sokoban]
+    environments: [sokoban, navigation]
     seeds: [0]
     steps: 50
   episode_screening:

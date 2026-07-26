@@ -104,3 +104,31 @@ def test_parity_report_persists_failed_gate_evidence(tmp_path):
     assert payload["gate_passed"] is False
     assert payload["metrics"]["ratio_p95"] == pytest.approx(1.4)
     assert payload["error"] == "ratio mismatch"
+    assert len(payload["attempts"]) == 1
+
+    write_rollout_train_parity_report(
+        path,
+        {"ratio_p95": 1.0, "num_tokens": 3},
+        global_step=1,
+        gate_enabled=True,
+        gate_passed=True,
+        thresholds={"max_p95_ratio_deviation": 0.1},
+    )
+    payload = json.loads(path.read_text())
+    assert payload["gate_passed"] is True
+    assert [attempt["gate_passed"] for attempt in payload["attempts"]] == [
+        False,
+        True,
+    ]
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text(json.dumps({**payload, "attempts": "not-a-list"}))
+    with pytest.raises(ValueError, match="malformed history"):
+        write_rollout_train_parity_report(
+            malformed,
+            {"ratio_p95": 1.0},
+            global_step=1,
+            gate_enabled=True,
+            gate_passed=True,
+            thresholds={},
+        )

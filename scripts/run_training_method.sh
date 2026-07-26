@@ -160,7 +160,8 @@ if [[ "${METHOD}" == "no_concat_episode_grpo" ]]; then
   EXPERIMENT_SUFFIX="${METHOD}_${REWARD_MODE}_${LOSS_WEIGHTING}_seed${SEED}"
 fi
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-${ENVIRONMENT}_${EXPERIMENT_SUFFIX}}"
-EXPERIMENT_DIR="${EXPERIMENT_DIR:-${ROOT_DIR}/exps/${PROJECT_NAME}/${EXPERIMENT_NAME}}"
+EXPERIMENT_ROOT="${EXPERIMENT_ROOT:-${ROOT_DIR}/exps/${PROJECT_NAME}}"
+EXPERIMENT_DIR="${EXPERIMENT_DIR:-${EXPERIMENT_ROOT}/${EXPERIMENT_NAME}}"
 CHECKPOINT_DIR="${EXPERIMENT_DIR}/checkpoints"
 AGENT_LOOP_CONFIG="${ROOT_DIR}/vagen/configs/${AGENT_CONFIG}"
 WANDB_DIR_VALUE="${WANDB_DIR:-${EXPERIMENT_DIR}/wandb}"
@@ -173,7 +174,22 @@ fi
 
 SGLANG_GPU_ARGS=()
 if command -v nvidia-smi >/dev/null 2>&1; then
-  GPU_NAME="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1)"
+  GPU_QUERY_ARGS=()
+  VISIBLE_GPU_SELECTORS="${CUDA_VISIBLE_DEVICES:-}"
+  if [[ -n "${VISIBLE_GPU_SELECTORS}" \
+    && "${VISIBLE_GPU_SELECTORS}" != "all" \
+    && "${VISIBLE_GPU_SELECTORS}" != "-1" \
+    && "${VISIBLE_GPU_SELECTORS}" != "none" \
+    && "${VISIBLE_GPU_SELECTORS}" != "void" ]]; then
+    FIRST_GPU_SELECTOR="${VISIBLE_GPU_SELECTORS%%,*}"
+    FIRST_GPU_SELECTOR="${FIRST_GPU_SELECTOR//[[:space:]]/}"
+    GPU_QUERY_ARGS+=("--id=${FIRST_GPU_SELECTOR}")
+  fi
+  GPU_NAME="$(
+    nvidia-smi "${GPU_QUERY_ARGS[@]}" \
+      --query-gpu=name --format=csv,noheader \
+      | head -n 1
+  )"
   if [[ "${GPU_NAME}" == *"B200"* || "${GPU_NAME}" == *"RTX 6000 Pro"* ]]; then
     SGLANG_GPU_ARGS+=(
       "+actor_rollout_ref.rollout.engine_kwargs.sglang.attention_backend=flashinfer"
@@ -324,11 +340,17 @@ MANIFEST_MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH}" \
 MANIFEST_MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH}" \
 MANIFEST_LORA_RANK="${LORA_RANK}" \
 MANIFEST_N_GPUS="${N_GPUS}" \
+MANIFEST_GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION}" \
+MANIFEST_VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN}" \
+MANIFEST_TEST_FREQ="${TEST_FREQ}" \
+MANIFEST_SAVE_FREQ="${SAVE_FREQ}" \
 MANIFEST_EXPERIMENT_DIR="${EXPERIMENT_DIR}" \
-  "${PYTHON_BIN}" - <<'PY'
-import json
+PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl${PYTHONPATH:+:${PYTHONPATH}}" \
+  "${PYTHON_BIN}" - "${TRAIN_COMMAND[@]}" <<'PY'
 import os
-from pathlib import Path
+import sys
+
+from vagen.utils.run_manifest import write_compatible_manifest
 
 def as_bool(name: str) -> bool:
     return os.environ[name].lower() == "true"
@@ -393,9 +415,19 @@ manifest = {
     "max_response_length": int(os.environ["MANIFEST_MAX_RESPONSE_LENGTH"]),
     "lora_rank": int(os.environ["MANIFEST_LORA_RANK"]),
     "n_gpus": int(os.environ["MANIFEST_N_GPUS"]),
+    "gpu_memory_utilization": float(
+        os.environ["MANIFEST_GPU_MEMORY_UTILIZATION"]
+    ),
+    "val_before_train": as_bool("MANIFEST_VAL_BEFORE_TRAIN"),
+    "test_freq": int(os.environ["MANIFEST_TEST_FREQ"]),
+    "save_freq": int(os.environ["MANIFEST_SAVE_FREQ"]),
+    "resume_mode": "auto",
+    "command": sys.argv[1:],
 }
-Path(os.environ["MANIFEST_EXPERIMENT_DIR"], "manifest.json").write_text(
-    json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+write_compatible_manifest(
+    os.path.join(os.environ["MANIFEST_EXPERIMENT_DIR"], "manifest.json"),
+    manifest,
+    require_existing_match=True,
 )
 PY
 
@@ -419,14 +451,48 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   exit 0
 fi
 
+RUN_RESUME_STATE="$(
+  RUN_STATE_DIR="${EXPERIMENT_DIR}" \
+  PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl${PYTHONPATH:+:${PYTHONPATH}}" \
+    "${PYTHON_BIN}" - <<'PY'
+import os
+
+from vagen.utils.run_manifest import classify_run_for_resume
+
+print(classify_run_for_resume(os.environ["RUN_STATE_DIR"]))
+PY
+)"
+case "${RUN_RESUME_STATE}" in
+  complete)
+    echo "[SKIP] Training run is already complete: ${EXPERIMENT_DIR}"
+    exit 0
+    ;;
+  failed-parity)
+    echo "[ERROR] This run has a failed rollout/train parity attempt; use a new experiment directory." >&2
+    exit 2
+    ;;
+  tainted-gpu-metrics)
+    echo "[ERROR] This run has incomplete GPU sampling evidence; use a new experiment directory." >&2
+    exit 2
+    ;;
+  resumable) ;;
+  *)
+    echo "[ERROR] Unknown run resume state: ${RUN_RESUME_STATE}" >&2
+    exit 2
+    ;;
+esac
+
 cd "${ROOT_DIR}"
 "${TRAIN_COMMAND[@]}" --cfg job --resolve > "${EXPERIMENT_DIR}/resolved_config.yaml"
+printf '\n===== session %s =====\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  | tee -a "${EXPERIMENT_DIR}/train.log"
 set +e
 PYTHONUNBUFFERED=1 "${PYTHON_BIN}" \
   "${ROOT_DIR}/scripts/run_with_gpu_metrics.py" \
   --output-dir "${EXPERIMENT_DIR}/gpu_metrics" \
+  --expected-device-count "${N_GPUS}" \
   -- "${TRAIN_COMMAND[@]}" \
-  2>&1 | tee "${EXPERIMENT_DIR}/train.log"
+  2>&1 | tee -a "${EXPERIMENT_DIR}/train.log"
 status=${PIPESTATUS[0]}
 set -e
 exit "${status}"

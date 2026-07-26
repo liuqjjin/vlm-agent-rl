@@ -60,6 +60,15 @@ if ! [[ "${SEED_START}" =~ ^[0-9]+$ ]]; then
   echo "[ERROR] SEED_START must be a non-negative integer." >&2
   exit 1
 fi
+if ! [[ "${DP_SIZE_VALUE}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[ERROR] DP_SIZE must be a positive integer." >&2
+  exit 1
+fi
+if ! [[ "${TP_SIZE_VALUE}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[ERROR] TP_SIZE must be a positive integer." >&2
+  exit 1
+fi
+EXPECTED_GPU_COUNT=$((DP_SIZE_VALUE * TP_SIZE_VALUE))
 SEED_END_EXCLUSIVE=$((SEED_START + N_ENVS))
 SEED_MAX=$((SEED_END_EXCLUSIVE - 1))
 TAG="${TAG:-${ENVIRONMENT}_${OBSERVATION_ABLATION}}"
@@ -76,7 +85,7 @@ COMMAND=(
   "envs.0.tag_id=${TAG}"
   "envs.0.observation_ablation=${OBSERVATION_ABLATION}"
   "run.max_concurrent_jobs=${MAX_CONCURRENT_JOBS}"
-  "run.resume=force_rerun"
+  "run.resume=skip_completed"
 )
 
 if [[ "${DRY_RUN}" == "1" ]]; then
@@ -122,10 +131,12 @@ EVAL_PORT="${PORT_VALUE}" \
 EVAL_DP_SIZE="${DP_SIZE_VALUE}" \
 EVAL_TP_SIZE="${TP_SIZE_VALUE}" \
 EVAL_MEM_FRACTION="${MEM_FRACTION_VALUE}" \
-  "${PYTHON_BIN}" - <<'PY'
-import json
+PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl${PYTHONPATH:+:${PYTHONPATH}}" \
+  "${PYTHON_BIN}" - "${COMMAND[@]}" <<'PY'
 import os
-from pathlib import Path
+import sys
+
+from vagen.utils.run_manifest import write_compatible_manifest
 
 manifest = {
     "commit": os.environ["EVAL_COMMIT"],
@@ -143,9 +154,13 @@ manifest = {
     "observation_ablation": os.environ["EVAL_ABLATION"],
     "seed_start": int(os.environ["EVAL_SEED_START"]),
     "seed_end_exclusive": int(os.environ["EVAL_SEED_END_EXCLUSIVE"]),
+    "resume_mode": "skip_completed",
+    "command": sys.argv[1:],
 }
-Path(os.environ["EVAL_DUMP_DIR"], "manifest.json").write_text(
-    json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+write_compatible_manifest(
+    os.path.join(os.environ["EVAL_DUMP_DIR"], "manifest.json"),
+    manifest,
+    require_existing_match=True,
 )
 PY
 
@@ -163,15 +178,48 @@ PY
 } > "${DUMP_DIR}/eval_command.sh"
 chmod +x "${DUMP_DIR}/eval_command.sh"
 
-MODEL_PATH="${MODEL_PATH}" \
-DUMP_DIR="${DUMP_DIR}" \
-PYTHON_BIN="${PYTHON_BIN}" \
-PORT="${PORT_VALUE}" \
-DP_SIZE="${DP_SIZE_VALUE}" \
-TP_SIZE="${TP_SIZE_VALUE}" \
-MEM_FRACTION="${MEM_FRACTION_VALUE}" \
-LOG_DIR="${LOG_DIR_VALUE}" \
-CONFIG_CHECK_OUTPUT="${CONFIG_CHECK_OUTPUT}" \
+RUN_RESUME_STATE="$(
+  RUN_STATE_DIR="${DUMP_DIR}" \
+  PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl${PYTHONPATH:+:${PYTHONPATH}}" \
+    "${PYTHON_BIN}" - <<'PY'
+import os
+
+from vagen.utils.run_manifest import classify_run_for_resume
+
+print(classify_run_for_resume(os.environ["RUN_STATE_DIR"]))
+PY
+)"
+case "${RUN_RESUME_STATE}" in
+  complete)
+    echo "[SKIP] Evaluation run is already complete: ${DUMP_DIR}"
+    exit 0
+    ;;
+  tainted-gpu-metrics)
+    echo "[ERROR] This run has incomplete GPU sampling evidence; use a new dump directory." >&2
+    exit 2
+    ;;
+  failed-parity)
+    echo "[ERROR] Unexpected parity evidence exists in this evaluation directory; use a new dump directory." >&2
+    exit 2
+    ;;
+  resumable) ;;
+  *)
+    echo "[ERROR] Unknown run resume state: ${RUN_RESUME_STATE}" >&2
+    exit 2
+    ;;
+esac
+
+env \
+  MODEL_PATH="${MODEL_PATH}" \
+  DUMP_DIR="${DUMP_DIR}" \
+  PYTHON_BIN="${PYTHON_BIN}" \
+  PORT="${PORT_VALUE}" \
+  DP_SIZE="${DP_SIZE_VALUE}" \
+  TP_SIZE="${TP_SIZE_VALUE}" \
+  MEM_FRACTION="${MEM_FRACTION_VALUE}" \
+  LOG_DIR="${LOG_DIR_VALUE}" \
+  CONFIG_CHECK_OUTPUT="${CONFIG_CHECK_OUTPUT}" \
   "${PYTHON_BIN}" "${ROOT_DIR}/scripts/run_with_gpu_metrics.py" \
   --output-dir "${METRICS_DIR}" \
+  --expected-device-count "${EXPECTED_GPU_COUNT}" \
   -- "${COMMAND[@]}"

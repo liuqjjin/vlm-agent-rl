@@ -13,7 +13,10 @@ from typing import Any, Iterable
 import numpy as np
 
 
-ANSWER_PATTERN = re.compile(r"<answer>(.*?)</answer>", flags=re.IGNORECASE | re.DOTALL)
+ANSWER_PATTERN = re.compile(
+    r"<(?P<tag>answer|action)\b[^>]*>(?P<body>.*?)</(?P=tag)>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
 RESULT_COLUMNS = [
     "Method",
     "Visual Success",
@@ -45,7 +48,7 @@ def _normalize_template(text: Any) -> str:
 
 def _answer_template(text: Any) -> str:
     match = ANSWER_PATTERN.search(str(text or ""))
-    return _normalize_template(match.group(1) if match else text)
+    return _normalize_template(match.group("body") if match else text)
 
 
 def _concentration(values: Iterable[str]) -> tuple[float | None, float | None]:
@@ -381,10 +384,15 @@ def build_result_row(root: Path) -> dict[str, Any]:
         if path.exists()
     ]
     behavior_complete = False
+    evaluation_failed = False
     visual_success = None
     mean_turns = None
     if episodes:
         evaluation = analyze_evaluation_episodes(episodes)
+        evaluation_failed = any(
+            episode["finish_reason"] not in {"done", "max_turns"}
+            for episode in episodes
+        )
         visual_success = evaluation["success_rate"]
         mean_turns = evaluation["mean_turns_successful"]
         evidence.extend(episode["metrics_path"] for episode in episodes[:1])
@@ -422,6 +430,11 @@ def build_result_row(root: Path) -> dict[str, Any]:
         and int(gpu.get("sample_count", 0) or 0) > 0
         and gpu.get("peak_vram_mib") is not None
         and gpu.get("gpu_hours") is not None
+        and not gpu.get("sampling_errors")
+        and (
+            gpu.get("expected_device_count") is None
+            or gpu.get("expected_device_count") == gpu.get("gpu_count")
+        )
     )
     is_training = "advantage_estimator" in manifest
     parity_complete = (
@@ -429,6 +442,14 @@ def build_result_row(root: Path) -> dict[str, Any]:
         or (
             parity.get("gate_enabled") is True
             and parity.get("gate_passed") is True
+        )
+    )
+    parity_attempts = parity.get("attempts")
+    parity_failed_once = (
+        isinstance(parity_attempts, list)
+        and any(
+            isinstance(attempt, dict) and attempt.get("gate_passed") is False
+            for attempt in parity_attempts
         )
     )
 
@@ -456,13 +477,20 @@ def build_result_row(root: Path) -> dict[str, Any]:
     )
     failed = (
         (gpu and gpu.get("return_code") not in {None, 0})
-        or (is_training and parity.get("gate_passed") is False)
+        or evaluation_failed
+        or (
+            is_training
+            and (
+                parity.get("gate_passed") is False
+                or parity_failed_once
+            )
+        )
     )
     if failed:
         status = "failed"
     elif behavior_complete and gpu_complete and parity_complete and provenance_complete:
         status = "complete"
-    elif episodes or latest or gpu or parity:
+    elif evidence or episodes or latest or gpu or parity:
         status = "incomplete-artifacts"
     else:
         status = "not-run"

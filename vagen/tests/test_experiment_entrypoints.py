@@ -9,6 +9,9 @@ import sys
 
 import pytest
 
+from vagen.evaluate.run_eval import _failed_evaluation_results
+from vagen.utils.run_manifest import write_compatible_manifest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 TRAIN_SCRIPT = ROOT / "scripts" / "run_training_method.sh"
@@ -193,7 +196,7 @@ def test_visual_eval_wrapper_dry_run_declares_auditable_runtime(
     )
     assert result.returncode == 0, result.stderr
     assert "CONFIG_CHECK_OUTPUT=" in result.stdout
-    assert "run.resume=force_rerun" in result.stdout
+    assert "run.resume=skip_completed" in result.stdout
     assert "eval_qwen25_vl_3b.sh" in result.stdout
     expected_count = 30 if environment == "navigation" else 128
     assert f"envs.0.n_envs={expected_count}" in result.stdout
@@ -208,6 +211,7 @@ def test_episode_screening_uses_nine_distinct_run_names(tmp_path: Path) -> None:
         {
             "DRY_RUN": "1",
             "PROJECT_NAME": f"matrix_contract_{tmp_path.name}",
+            "EXPERIMENT_ROOT": str(tmp_path / "runs"),
             "PYTHON_BIN": sys.executable,
             "SCREENING_STEPS": "1",
             "SCREENING_BATCH_SIZE": "2",
@@ -225,6 +229,44 @@ def test_episode_screening_uses_nine_distinct_run_names(tmp_path: Path) -> None:
     names = re.findall(r"trainer\.experiment_name=([^ ]+)", result.stdout)
     assert len(names) == 9
     assert len(set(names)) == 9
+
+
+def test_core_screening_covers_every_method_and_environment(
+    tmp_path: Path,
+) -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "DRY_RUN": "1",
+            "PROJECT_NAME": f"core_matrix_contract_{tmp_path.name}",
+            "EXPERIMENT_ROOT": str(tmp_path / "runs"),
+            "PYTHON_BIN": sys.executable,
+            "SCREENING_STEPS": "1",
+            "SCREENING_BATCH_SIZE": "2",
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(MATRIX_SCRIPT), "core-screening"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    names = re.findall(r"trainer\.experiment_name=([^ ]+)", result.stdout)
+    assert len(names) == 6
+    assert len(set(names)) == 6
+    for environment in ("sokoban", "navigation"):
+        for method in (
+            "concat_grpo",
+            "no_concat_gae",
+            "no_concat_episode_grpo",
+        ):
+            assert any(
+                name.startswith(f"{environment}_core_screening_{method}")
+                for name in names
+            )
 
 
 @pytest.mark.parametrize(
@@ -253,3 +295,46 @@ def test_entrypoint_blocks_qwen3_vl_case_insensitively(tmp_path: Path) -> None:
     )
     assert result.returncode == 2
     assert "Qwen3-VL is blocked" in result.stderr
+
+
+def test_formal_eval_distinguishes_task_failure_from_infrastructure_failure():
+    results = [
+        {"rollout_id": "solved", "finish_reason": "done"},
+        {"rollout_id": "unsolved", "finish_reason": "max_turns"},
+        {"rollout_id": "provider", "finish_reason": "model_error"},
+        {"rollout_id": "outer", "error": "environment constructor failed"},
+    ]
+    failures = _failed_evaluation_results(results)
+    assert [result["rollout_id"] for result in failures] == [
+        "provider",
+        "outer",
+    ]
+
+
+def test_formal_manifest_refuses_cross_run_relabeling(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    write_compatible_manifest(
+        path,
+        {"commit": "a", "seed": 0},
+        require_existing_match=True,
+    )
+    write_compatible_manifest(
+        path,
+        {"commit": "a", "seed": 0},
+        require_existing_match=True,
+    )
+    with pytest.raises(ValueError, match="different run"):
+        write_compatible_manifest(
+            path,
+            {"commit": "b", "seed": 0},
+            require_existing_match=True,
+        )
+    assert json.loads(path.read_text()) == {"commit": "a", "seed": 0}
+
+    path.write_text("[]")
+    with pytest.raises(ValueError, match="JSON object"):
+        write_compatible_manifest(
+            path,
+            {"commit": "a", "seed": 0},
+            require_existing_match=True,
+        )
