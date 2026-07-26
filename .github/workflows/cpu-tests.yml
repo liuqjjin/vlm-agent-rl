@@ -1,0 +1,46 @@
+name: CPU correctness
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/cpu-test.txt
+
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install --requirement requirements/cpu-test.txt
+          python -m pip install --no-deps --editable verl --editable .
+
+      - name: Check focused source
+        run: |
+          ruff check \
+            vagen/analysis \
+            vagen/custom_advantage/no_concat_episode_grpo.py \
+            vagen/utils/logprob_parity.py \
+            vagen/utils/state_anchor.py
+
+      - name: Run CPU regressions
+        run: |
+          pytest -q \
+            vagen/tests/test_concat_val_multi_turn.py \
+            vagen/tests/test_value_mask_regression.py \
+            vagen/tests/test_no_concat_episode_grpo.py \
+            vagen/tests/test_logprob_parity.py \
+            vagen/tests/test_state_relative_preflight.py \
+            vagen/tests/test_sokoban_reward_bias.py \
+            verl/tests/trainer/ppo/test_sparse_value_supervision_on_cpu.py \
+            verl/tests/trainer/ppo/test_policy_weights_on_cpu.py

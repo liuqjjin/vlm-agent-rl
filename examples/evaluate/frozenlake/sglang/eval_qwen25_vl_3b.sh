@@ -51,6 +51,7 @@ wait_for_server
 python -m vagen.evaluate.run_eval --config "${CONFIG}" \
   run.backend=sglang \
   backends.sglang.base_url="http://127.0.0.1:${PORT}/v1" \
+  backends.sglang.model="${MODEL_PATH}" \
   experiment.dump_dir="${DUMP_DIR}" \
   fileroot="${fileroot}" \
   "$@" \
