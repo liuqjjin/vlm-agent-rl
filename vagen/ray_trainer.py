@@ -65,10 +65,11 @@ from vagen.utils.concat_val_multi_turn import concat_val_multi_turn
 from vagen.utils.image_token_utils import replace_image_tokens_for_logging
 from vagen.utils.logprob_parity import (
     calculate_rollout_train_parity,
+    deduplicate_turn_response_mask,
     enforce_rollout_train_parity,
     write_rollout_train_parity_report,
 )
-import vagen.custom_advantage
+import vagen.custom_advantage  # noqa: F401  # registers advantage estimators
 from vagen.custom_metric.metric import METRIC_REGISTRY
 from vagen.custom_filter.filter import FILTER_REGISTRY
 @dataclass
@@ -587,10 +588,22 @@ class RayPPOTrainer:
             skip_pad_tokens = self.config.trainer.get("skip_pad_tokens", True)
             if skip_pad_tokens:
                 inputs = self.tokenizer.batch_decode(
-                    [s[-l:] if l else [] for s, l in zip(inputs.tolist(),  (inputs  != pad_token_id).sum(1).tolist())],
+                    [
+                        sequence[-length:] if length else []
+                        for sequence, length in zip(
+                            inputs.tolist(),
+                            (inputs != pad_token_id).sum(1).tolist(),
+                        )
+                    ],
                     skip_special_tokens=False)
                 outputs = self.tokenizer.batch_decode(
-                    [s[:l]  if l else [] for s, l in zip(outputs.tolist(), (outputs != pad_token_id).sum(1).tolist())],
+                    [
+                        sequence[:length] if length else []
+                        for sequence, length in zip(
+                            outputs.tolist(),
+                            (outputs != pad_token_id).sum(1).tolist(),
+                        )
+                    ],
                     skip_special_tokens=False)
             else:
                 inputs = self.tokenizer.batch_decode(inputs.tolist(), skip_special_tokens=False)
@@ -869,10 +882,22 @@ class RayPPOTrainer:
             outputs = test_batch.batch["responses"]
             if skip_pad_tokens:
                 inputs = self.tokenizer.batch_decode(
-                    [s[-l:] if l else [] for s, l in zip(inputs.tolist(),  (inputs  != pad_token_id).sum(1).tolist())],
+                    [
+                        sequence[-length:] if length else []
+                        for sequence, length in zip(
+                            inputs.tolist(),
+                            (inputs != pad_token_id).sum(1).tolist(),
+                        )
+                    ],
                     skip_special_tokens=False)
                 outputs = self.tokenizer.batch_decode(
-                    [s[:l]  if l else [] for s, l in zip(outputs.tolist(), (outputs != pad_token_id).sum(1).tolist())],
+                    [
+                        sequence[:length] if length else []
+                        for sequence, length in zip(
+                            outputs.tolist(),
+                            (outputs != pad_token_id).sum(1).tolist(),
+                        )
+                    ],
                     skip_special_tokens=False)
             else:
                 inputs = self.tokenizer.batch_decode(inputs.tolist(), skip_special_tokens=False)
@@ -1468,10 +1493,31 @@ class RayPPOTrainer:
                                 from verl.utils.debug.metrics import calculate_debug_metrics
 
                                 metrics.update(calculate_debug_metrics(batch))
+                                parity_response_mask = batch.batch["response_mask"]
+                                if not self.concat_multi_turn:
+                                    identity_keys = ("group_idx", "traj_idx", "turn_idx")
+                                    missing_identity = [
+                                        key
+                                        for key in identity_keys
+                                        if key not in batch.non_tensor_batch
+                                    ]
+                                    if missing_identity:
+                                        raise RuntimeError(
+                                            "no-concat rollout/train parity requires turn identity; "
+                                            f"missing {missing_identity}"
+                                        )
+                                    parity_response_mask = (
+                                        deduplicate_turn_response_mask(
+                                            parity_response_mask,
+                                            batch.non_tensor_batch["group_idx"],
+                                            batch.non_tensor_batch["traj_idx"],
+                                            batch.non_tensor_batch["turn_idx"],
+                                        )
+                                    )
                                 parity_metrics = calculate_rollout_train_parity(
                                     train_log_probs=batch.batch["old_log_probs"],
                                     rollout_log_probs=batch.batch["rollout_log_probs"],
-                                    response_mask=batch.batch["response_mask"],
+                                    response_mask=parity_response_mask,
                                     clip_low=float(parity_config.get("clip_low", 0.8)),
                                     clip_high=float(parity_config.get("clip_high", 1.2)),
                                 )

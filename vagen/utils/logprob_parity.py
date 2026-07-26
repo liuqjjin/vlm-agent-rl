@@ -10,6 +10,53 @@ from typing import Any
 import torch
 
 
+def deduplicate_turn_response_mask(
+    response_mask: torch.Tensor,
+    group_idx: Any,
+    traj_idx: Any,
+    turn_idx: Any,
+) -> torch.Tensor:
+    """Mask repeated no-concat rows introduced by distributed padding.
+
+    The trainer pads by copying complete rows before balancing them across data
+    parallel ranks. Parity is a property of the sampled policy data, so copied
+    ``(group, trajectory, turn)`` rows must not change its token distribution.
+    """
+    if response_mask.ndim != 2:
+        raise ValueError(
+            f"response_mask must be rank 2, got shape {tuple(response_mask.shape)}"
+        )
+    row_count = response_mask.shape[0]
+
+    def _rows(values: Any, name: str) -> list[Any]:
+        if isinstance(values, torch.Tensor):
+            flattened = values.detach().cpu().reshape(-1).tolist()
+        else:
+            try:
+                flattened = list(values)
+            except TypeError as error:
+                raise ValueError(f"{name} must contain one value per row") from error
+        if len(flattened) != row_count:
+            raise ValueError(
+                f"{name} has {len(flattened)} rows; expected {row_count}"
+            )
+        return flattened
+
+    groups = _rows(group_idx, "group_idx")
+    trajectories = _rows(traj_idx, "traj_idx")
+    turns = _rows(turn_idx, "turn_idx")
+    keep = torch.zeros(row_count, dtype=torch.bool, device=response_mask.device)
+    seen: set[tuple[tuple[str, str], int, int]] = set()
+    for row, (group, trajectory, turn) in enumerate(
+        zip(groups, trajectories, turns, strict=True)
+    ):
+        key = ((type(group).__name__, str(group)), int(trajectory), int(turn))
+        if key not in seen:
+            seen.add(key)
+            keep[row] = True
+    return response_mask * keep.unsqueeze(-1).to(dtype=response_mask.dtype)
+
+
 def calculate_rollout_train_parity(
     train_log_probs: torch.Tensor,
     rollout_log_probs: torch.Tensor,

@@ -65,6 +65,28 @@ def test_empty_mask_is_rejected():
         calculate(torch.zeros(1, 2), torch.zeros(1, 2), torch.zeros(1, 2))
 
 
+def test_no_concat_padding_duplicates_do_not_change_parity_distribution():
+    from vagen.utils.logprob_parity import deduplicate_turn_response_mask
+
+    rollout = torch.zeros(3, 2)
+    train = torch.tensor(
+        [[0.0, math.log(1.1)], [math.log(0.9), 0.0], [math.log(0.9), 0.0]]
+    )
+    response_mask = torch.tensor([[1, 1], [1, 0], [1, 0]])
+    unique_mask = deduplicate_turn_response_mask(
+        response_mask,
+        group_idx=["g", "g", "g"],
+        traj_idx=[0, 1, 1],
+        turn_idx=[1, 1, 1],
+    )
+    calculate, _ = _implementation()
+    baseline = calculate(train[:2], rollout[:2], response_mask[:2])
+    padded = calculate(train, rollout, unique_mask)
+
+    assert torch.equal(unique_mask[-1], torch.zeros(2, dtype=unique_mask.dtype))
+    assert padded == pytest.approx(baseline)
+
+
 def test_parity_report_persists_failed_gate_evidence(tmp_path):
     from vagen.utils.logprob_parity import write_rollout_train_parity_report
 

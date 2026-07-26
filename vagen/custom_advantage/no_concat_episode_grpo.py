@@ -156,17 +156,30 @@ def compute_policy_weights(
 def _rows_match(
     left: int,
     right: int,
+    batch: Any,
     rewards: torch.Tensor,
     response_mask: torch.Tensor,
     successes: np.ndarray,
     terminal: np.ndarray,
 ) -> bool:
-    return (
+    core_fields_match = (
         torch.equal(rewards[left], rewards[right])
         and torch.equal(response_mask[left], response_mask[right])
         and bool(successes[left]) == bool(successes[right])
         and bool(terminal[left]) == bool(terminal[right])
     )
+    if not core_fields_match:
+        return False
+    for key in (
+        "responses",
+        "input_ids",
+        "attention_mask",
+        "position_ids",
+        "rollout_log_probs",
+    ):
+        if key in batch and not torch.equal(batch[key][left], batch[key][right]):
+            return False
+    return True
 
 
 @register_adv_est("no_concat_episode_grpo")
@@ -208,7 +221,15 @@ def compute_no_concat_episode_grpo(
             first_by_turn[key] = row
             continue
         first = first_by_turn[key]
-        if not _rows_match(first, row, rewards, response_mask, successes, terminal):
+        if not _rows_match(
+            first,
+            row,
+            data.batch,
+            rewards,
+            response_mask,
+            successes,
+            terminal,
+        ):
             raise ValueError(f"conflicting duplicate for (group, trajectory, turn)={key}")
         duplicate_count += 1
 
@@ -221,9 +242,11 @@ def compute_no_concat_episode_grpo(
     for trajectory_key, rows in rows_by_trajectory.items():
         rows.sort(key=lambda row: int(turns[row]))
         turn_values = [int(turns[row]) for row in rows]
-        if any(right != left + 1 for left, right in zip(turn_values, turn_values[1:])):
+        expected_turns = list(range(1, len(turn_values) + 1))
+        if turn_values != expected_turns:
             issues_by_group[trajectory_key[0]].append(
-                f"trajectory {trajectory_key[1]} turn_idx is not contiguous: {turn_values}"
+                f"trajectory {trajectory_key[1]} turn_idx must start at 1 and be contiguous: "
+                f"{turn_values}"
             )
         terminal_rows = [row for row in rows if bool(terminal[row])]
         if len(terminal_rows) != 1 or terminal_rows[0] != rows[-1]:
@@ -235,6 +258,13 @@ def compute_no_concat_episode_grpo(
     for trajectory_key in rows_by_trajectory:
         trajectories_by_group[trajectory_key[0]].append(trajectory_key)
     for group, trajectory_keys in trajectories_by_group.items():
+        trajectory_ids = sorted(key[1] for key in trajectory_keys)
+        expected_ids = list(range(int(num_repeat)))
+        if trajectory_ids != expected_ids:
+            issues_by_group[group].append(
+                f"group {group[1]!r} traj_idx must be exactly {expected_ids}; "
+                f"got {trajectory_ids}"
+            )
         if len(trajectory_keys) != int(num_repeat):
             issues_by_group[group].append(
                 f"group {group[1]!r} has {len(trajectory_keys)} trajectories; "
@@ -326,4 +356,3 @@ def compute_no_concat_episode_grpo(
         "loss_weighting": policy_mode,
     }
     return advantages, advantages.clone()
-

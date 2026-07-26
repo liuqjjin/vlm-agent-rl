@@ -156,6 +156,15 @@ def test_missing_terminal_marker_and_turn_gap_are_rejected():
         _advantages(turn_gap)
 
 
+def test_trajectory_missing_first_turn_is_rejected():
+    rows = [
+        _row("g", 0, 2, 0.0, last=True),
+        _row("g", 1, 1, 1.1, success=True),
+    ]
+    with pytest.raises(ValueError, match="start at 1"):
+        _advantages(rows)
+
+
 def test_conflicting_padding_duplicate_is_rejected():
     rows = [
         _row("g", 0, 1, 0.0, success=False),
@@ -163,6 +172,35 @@ def test_conflicting_padding_duplicate_is_rejected():
         _row("g", 1, 1, 0.1, success=True),
     ]
     with pytest.raises(ValueError, match="conflicting duplicate"):
+        _advantages(rows)
+
+
+def test_duplicate_identity_with_different_response_tokens_is_rejected():
+    rows = [
+        _row("g", 0, 1, 0.0, success=False),
+        _row("g", 1, 1, 1.1, success=True),
+        _row("g", 1, 1, 1.1, success=True),
+    ]
+    data = _data(rows)
+    data.batch["responses"] = torch.tensor([[10, 0, 0], [20, 0, 0], [21, 0, 0]])
+    compute, _, _ = _implementation()
+    with pytest.raises(ValueError, match="conflicting duplicate"):
+        compute(
+            data=data,
+            gamma=1.0,
+            lam=1.0,
+            num_repeat=2,
+            norm_adv_by_std_in_grpo=True,
+            config=_config(),
+        )
+
+
+def test_trajectory_ids_must_match_the_rollout_repeat_range():
+    rows = [
+        _row("g", 2, 1, 0.0, success=False),
+        _row("g", 3, 1, 1.1, success=True),
+    ]
+    with pytest.raises(ValueError, match="traj_idx must be exactly"):
         _advantages(rows)
 
 

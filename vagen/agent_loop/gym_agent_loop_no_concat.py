@@ -261,7 +261,7 @@ class GymAgentLoop(AgentLoopBase):
         
         
         
-        if done:
+        if done or traj_success:
             last_turn = True
 
         if self.env_max_turns is not None and agent_data.env_turns >= int(self.env_max_turns):
