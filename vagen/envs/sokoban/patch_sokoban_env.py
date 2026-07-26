@@ -2,10 +2,21 @@ from gym_sokoban.envs.sokoban_env import SokobanEnv
 from gym.utils import seeding
 from gym_sokoban.envs.room_utils import generate_room
 from .utils.seeding import set_seed
+import hashlib
 import numpy as np
 from collections import deque
 import marshal
 import copy
+
+
+def next_sokoban_seed(seed):
+    """Advance a retry seed without depending on Python's randomized hash salt."""
+    if seed is None:
+        return None
+    digest = hashlib.blake2s(str(int(seed)).encode(), digest_size=4).digest()
+    return int.from_bytes(digest, byteorder="little", signed=False)
+
+
 def get_shortest_action_path(room_fixed: np.ndarray, room_state: np.ndarray, MAX_DEPTH: int = 100) -> list[int]:
     """
     BFS shortest solution in action space (up/down/left/right).
@@ -93,7 +104,7 @@ class PatchedSokobanEnv(SokobanEnv):
             except (RuntimeError, RuntimeWarning) as e:
                 print("[SOKOBAN] Runtime Error/Warning: {}".format(e))
                 print("[SOKOBAN] Retry . . .")
-            seed = abs(hash(str(seed))) % (2 ** 32) if seed is not None else None
+            seed = next_sokoban_seed(seed)
         if not find_solution:
             print(f"Max tries reached: {reset_seed_max_tries}, using map with action seq len {action_seq_len}")
                 
