@@ -63,6 +63,7 @@ from vagen.utils.upload_hugging_face import HFUploadManager
 from vagen.utils.image_validation_logger import ValidationGenerationsLogger
 from vagen.utils.concat_val_multi_turn import concat_val_multi_turn
 from vagen.utils.image_token_utils import replace_image_tokens_for_logging
+from vagen.utils.logprob_parity import calculate_rollout_train_parity, enforce_rollout_train_parity
 import vagen.custom_advantage
 from vagen.custom_metric.metric import METRIC_REGISTRY
 from vagen.custom_filter.filter import FILTER_REGISTRY
@@ -1419,8 +1420,15 @@ class RayPPOTrainer:
                     # - Decoupled mode: Recomputes old_log_probs as proximal anchor (3 policies: π_rollout, π_old, π_θ)
                     #   Note: π_old computed once per data batch, serves as stable reference during mini-batch updates
                     rollout_corr_config = self.config.algorithm.get("rollout_correction", None)
+                    parity_config = self.config.algorithm.get("rollout_train_parity", {})
+                    parity_gate_enabled = bool(parity_config.get("enabled", False))
                     bypass_recomputing_logprobs = rollout_corr_config and rollout_corr_config.get("bypass_mode", False)
                     if bypass_recomputing_logprobs:  # Use `rollout_log_probs`
+                        if parity_gate_enabled and self.global_steps == 1:
+                            raise RuntimeError(
+                                "rollout/train parity requires a recomputed training forward; "
+                                "disable rollout-correction bypass mode"
+                            )
                         from verl.trainer.ppo.rollout_corr_helper import apply_rollout_correction
 
                         apply_rollout_correction(
@@ -1442,10 +1450,39 @@ class RayPPOTrainer:
                             old_log_prob.batch.pop("entropys")
                             batch = batch.union(old_log_prob)
                             if "rollout_log_probs" in batch.batch.keys():
-                                # TODO: we may want to add diff of probs too.
                                 from verl.utils.debug.metrics import calculate_debug_metrics
 
                                 metrics.update(calculate_debug_metrics(batch))
+                                parity_metrics = calculate_rollout_train_parity(
+                                    train_log_probs=batch.batch["old_log_probs"],
+                                    rollout_log_probs=batch.batch["rollout_log_probs"],
+                                    response_mask=batch.batch["response_mask"],
+                                    clip_low=float(parity_config.get("clip_low", 0.8)),
+                                    clip_high=float(parity_config.get("clip_high", 1.2)),
+                                )
+                                metrics.update(
+                                    {f"sanity/rollout_train_{key}": value for key, value in parity_metrics.items()}
+                                )
+                                if parity_gate_enabled and self.global_steps == 1:
+                                    enforce_rollout_train_parity(
+                                        parity_metrics,
+                                        max_p95_ratio_deviation=parity_config.get(
+                                            "max_p95_ratio_deviation", 0.1
+                                        ),
+                                        max_p99_ratio_deviation=float(
+                                            parity_config.get("max_p99_ratio_deviation", 0.2)
+                                        ),
+                                        max_mean_abs_logprob_delta=float(
+                                            parity_config.get("max_mean_abs_logprob_delta", 0.05)
+                                        ),
+                                        max_clip_fraction=float(
+                                            parity_config.get("max_clip_fraction", 0.01)
+                                        ),
+                                    )
+                            elif parity_gate_enabled and self.global_steps == 1:
+                                raise RuntimeError(
+                                    "rollout/train parity is enabled, but rollout_log_probs are missing"
+                                )
 
                     assert "old_log_probs" in batch.batch, f'"old_log_prob" not in {batch.batch.keys()=}'
 
@@ -1513,7 +1550,7 @@ class RayPPOTrainer:
                             config=self.config.algorithm,
                         )
 
-                    if self.config.algorithm.adv_estimator in ["no_concat_gae_last", "no_concat_gae_first"]:
+                    if self.config.algorithm.adv_estimator in ["no_concat_gae_last", "no_concat_gae"]:
                         batch.batch["value_mask"] = compute_value_mask(batch)
 
                     # compute custom metrics

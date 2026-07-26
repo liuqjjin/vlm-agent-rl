@@ -58,6 +58,14 @@ trainer:
 algorithm:
   gamma: 1.0                 
   lam: 1.0                   
+  rollout_train_parity:
+    enabled: False
+    clip_low: 0.8
+    clip_high: 1.2
+    max_p95_ratio_deviation: 0.1
+    max_p99_ratio_deviation: 0.2
+    max_mean_abs_logprob_delta: 0.05
+    max_clip_fraction: 0.01
 
 # ============================================================================
 # Data Filter Configuration

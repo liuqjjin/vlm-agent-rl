@@ -214,7 +214,7 @@ def test_policy_weighting_matches_its_declared_objective(mode, expected):
         turn_idx=np.array([1, 1, 2]),
         mode=mode,
     )
-    objective = (losses * response_mask * weights).sum() / response_mask.sum()
+    objective = (losses * response_mask * weights).sum()
     assert objective.item() == pytest.approx(expected)
 
 
@@ -228,7 +228,7 @@ def test_policy_weighting_is_padding_duplicate_invariant():
         np.array([1, 1, 2]),
     )
     weights = weights_fn(mask, *ids, mode="trajectory")
-    baseline = (losses * mask * weights).sum() / mask.sum()
+    baseline = (losses * mask * weights).sum()
 
     duplicate_mask = torch.cat([mask, mask[-1:]], dim=0)
     duplicate_losses = torch.cat([losses, losses[-1:]], dim=0)
@@ -238,6 +238,41 @@ def test_policy_weighting_is_padding_duplicate_invariant():
         np.append(ids[2], ids[2][-1]),
     )
     duplicate_weights = weights_fn(duplicate_mask, *duplicate_ids, mode="trajectory")
-    duplicated = (duplicate_losses * duplicate_mask * duplicate_weights).sum() / duplicate_mask.sum()
+    duplicated = (duplicate_losses * duplicate_mask * duplicate_weights).sum()
     assert duplicated.item() == pytest.approx(baseline.item())
     assert torch.count_nonzero(duplicate_weights[-1]).item() == 0
+
+
+def test_policy_weighted_objective_is_microbatch_partition_invariant():
+    from verl.trainer.ppo.core_algos import apply_policy_loss_weights
+
+    response_mask = torch.tensor([[1, 0], [1, 1], [1, 0]], dtype=torch.float32)
+    advantages = torch.tensor([[2.0, 0.0], [-1.0, -1.0], [3.0, 0.0]])
+    _, weights_fn, _ = _implementation()
+    weights = weights_fn(
+        response_mask,
+        np.array(["g", "g", "g"], dtype=object),
+        np.array([0, 1, 1]),
+        np.array([1, 1, 2]),
+        mode="trajectory",
+    )
+    token_losses = torch.tensor([[1.0, 0.0], [3.0, 3.0], [9.0, 0.0]])
+    expected = (token_losses * advantages * response_mask * weights).sum()
+
+    accumulated = torch.tensor(0.0)
+    partitions = [slice(0, 1), slice(1, 3)]
+    for part in partitions:
+        local_mask = response_mask[part]
+        loss_scale_factor = local_mask.shape[0] / response_mask.shape[0]
+        local_advantages = apply_policy_loss_weights(
+            advantages[part],
+            local_mask,
+            weights[part],
+            loss_scale_factor,
+        )
+        local_token_mean = (
+            token_losses[part] * local_advantages * local_mask
+        ).sum() / local_mask.sum()
+        accumulated += local_token_mean * loss_scale_factor
+
+    assert accumulated.item() == pytest.approx(expected.item())

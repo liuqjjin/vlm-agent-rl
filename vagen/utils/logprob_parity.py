@@ -1,0 +1,81 @@
+"""Rollout-engine versus training-forward log-probability sanity checks."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+
+import torch
+
+
+def calculate_rollout_train_parity(
+    train_log_probs: torch.Tensor,
+    rollout_log_probs: torch.Tensor,
+    response_mask: torch.Tensor,
+    *,
+    clip_low: float = 0.8,
+    clip_high: float = 1.2,
+) -> dict[str, float | int]:
+    """Summarize ``pi_train(a|s) / pi_rollout(a|s)`` on valid action tokens."""
+    if train_log_probs.shape != rollout_log_probs.shape or train_log_probs.shape != response_mask.shape:
+        raise ValueError(
+            "train_log_probs, rollout_log_probs, and response_mask must have identical shapes; "
+            f"got {train_log_probs.shape}, {rollout_log_probs.shape}, {response_mask.shape}"
+        )
+    if not 0 < clip_low < 1 < clip_high:
+        raise ValueError(f"expected 0 < clip_low < 1 < clip_high, got {clip_low}, {clip_high}")
+
+    valid = response_mask.to(dtype=torch.bool)
+    if not bool(valid.any()):
+        raise ValueError("no valid response tokens for rollout/train parity")
+    train = train_log_probs[valid].detach().to(dtype=torch.float64)
+    rollout = rollout_log_probs[valid].detach().to(dtype=torch.float64)
+    if not bool(torch.isfinite(train).all() and torch.isfinite(rollout).all()):
+        raise ValueError("non-finite log probabilities in rollout/train parity inputs")
+
+    delta = train - rollout
+    # A delta this large is already a hard failure; clamping only keeps summary
+    # quantiles finite and does not make the configured gate pass.
+    ratio = torch.exp(delta.clamp(min=-80.0, max=80.0))
+    clipped = (ratio < float(clip_low)) | (ratio > float(clip_high))
+    return {
+        "ratio_mean": float(ratio.mean().item()),
+        "ratio_median": float(torch.quantile(ratio, 0.50).item()),
+        "ratio_p95": float(torch.quantile(ratio, 0.95).item()),
+        "ratio_p99": float(torch.quantile(ratio, 0.99).item()),
+        "mean_abs_logprob_delta": float(delta.abs().mean().item()),
+        "pre_update_clip_fraction": float(clipped.to(dtype=torch.float64).mean().item()),
+        "num_tokens": int(ratio.numel()),
+    }
+
+
+def enforce_rollout_train_parity(
+    metrics: Mapping[str, float | int],
+    *,
+    max_p95_ratio_deviation: float | None = None,
+    max_p99_ratio_deviation: float = 0.2,
+    max_mean_abs_logprob_delta: float = 0.1,
+    max_clip_fraction: float = 0.05,
+) -> None:
+    """Stop before an update when rollout/training policies clearly disagree."""
+    failures: list[str] = []
+    if max_p95_ratio_deviation is not None:
+        deviation = abs(float(metrics["ratio_p95"]) - 1.0)
+        if deviation > float(max_p95_ratio_deviation):
+            failures.append(
+                f"ratio P95 deviation {deviation:.4f} > {float(max_p95_ratio_deviation):.4f}"
+            )
+    p99_deviation = abs(float(metrics["ratio_p99"]) - 1.0)
+    if p99_deviation > float(max_p99_ratio_deviation):
+        failures.append(f"ratio P99 deviation {p99_deviation:.4f} > {float(max_p99_ratio_deviation):.4f}")
+    mean_abs_delta = float(metrics["mean_abs_logprob_delta"])
+    if mean_abs_delta > float(max_mean_abs_logprob_delta):
+        failures.append(
+            f"mean absolute logprob delta {mean_abs_delta:.4f} > "
+            f"{float(max_mean_abs_logprob_delta):.4f}"
+        )
+    clip_fraction = float(metrics["pre_update_clip_fraction"])
+    if clip_fraction > float(max_clip_fraction):
+        failures.append(f"pre-update clip fraction {clip_fraction:.4f} > {float(max_clip_fraction):.4f}")
+    if failures:
+        raise RuntimeError("rollout/train logprob parity check failed: " + "; ".join(failures))
+

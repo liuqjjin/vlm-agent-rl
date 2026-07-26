@@ -24,7 +24,6 @@ from vagen.custom_advantage.no_concat_gae import (
 
 ROOT = Path(__file__).resolve().parents[2]
 TRAINER_PATH = ROOT / "vagen" / "ray_trainer.py"
-CRITIC_PATH = ROOT / "verl" / "verl" / "workers" / "critic" / "dp_critic.py"
 
 
 def _function_node(path: Path, name: str) -> ast.FunctionDef:
@@ -43,43 +42,6 @@ def _value_mask_estimators() -> set[str]:
             continue
         return {child.value for child in ast.walk(node.test) if isinstance(child, ast.Constant) and isinstance(child.value, str)}
     raise AssertionError("could not find the value-mask dispatch in RayPPOTrainer.fit")
-
-
-def _critic_selected_keys_when_value_mask_is_present() -> list[str]:
-    """Interpret the simple select-key construction before ``data.select``.
-
-    Keeping this small interpreter in the test lets the gradient assertion
-    exercise the exact keys selected by the pinned critic implementation
-    without constructing an FSDP model.
-    """
-    update = _function_node(CRITIC_PATH, "update_critic")
-    keys: list[str] | None = None
-    for statement in update.body:
-        if isinstance(statement, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "select_keys" for target in statement.targets
-        ):
-            keys = list(ast.literal_eval(statement.value))
-            continue
-        if isinstance(statement, ast.If) and "value_mask" in ast.unparse(statement.test):
-            for child in ast.walk(statement):
-                if (
-                    isinstance(child, ast.Call)
-                    and isinstance(child.func, ast.Attribute)
-                    and isinstance(child.func.value, ast.Name)
-                    and child.func.value.id == "select_keys"
-                    and child.func.attr == "append"
-                ):
-                    keys.append(ast.literal_eval(child.args[0]))
-            continue
-        if (
-            isinstance(statement, ast.Assign)
-            and isinstance(statement.value, ast.Call)
-            and isinstance(statement.value.func, ast.Attribute)
-            and statement.value.func.attr == "select"
-        ):
-            break
-    assert keys is not None
-    return keys
 
 
 def _sparse_critic_batch() -> DataProto:
@@ -105,8 +67,10 @@ def test_current_no_concat_gae_name_enables_value_mask():
 
 
 def test_value_mask_survives_critic_selection_and_blocks_sentinel_gradient():
+    from verl.workers.critic.dp_critic import _critic_update_batch_keys
+
     data = _sparse_critic_batch()
-    selected = data.select(batch_keys=_critic_selected_keys_when_value_mask_is_present())
+    selected = data.select(batch_keys=_critic_update_batch_keys(data))
 
     response_mask = selected.batch["response_mask"]
     effective_mask = response_mask * selected.batch.get("value_mask", response_mask)
@@ -149,4 +113,3 @@ def test_no_concat_gae_supervises_exactly_one_value_per_turn():
     mask = returns.ne(-100.0)
     assert mask.sum().item() == 2
     assert mask.sum(dim=-1).tolist() == [1, 1]
-
