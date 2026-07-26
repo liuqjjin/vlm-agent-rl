@@ -408,9 +408,14 @@ def _resolve_defaults(cfg_path: str, cfg: DictConfig, _visited: Optional[set] = 
 def _load_config(cfg_path: str, overrides: List[str]) -> DictConfig:
     cfg: DictConfig = OmegaConf.load(cfg_path)  # type: ignore
     cfg = _resolve_defaults(cfg_path, cfg)
-    if overrides:
-        override_cfg = OmegaConf.from_dotlist(overrides)
-        cfg = OmegaConf.merge(cfg, override_cfg)
+    for override in overrides:
+        if "=" not in override:
+            raise ValueError(f"invalid override {override!r}; expected key=value")
+        key, raw_value = override.split("=", 1)
+        parsed = OmegaConf.from_dotlist([f"value={raw_value}"])["value"]
+        # OmegaConf.merge cannot merge {'envs': {'0': ...}} into an existing
+        # ListConfig. update() understands numeric path components as indices.
+        OmegaConf.update(cfg, key, parsed, merge=True)
     return cfg
 
 

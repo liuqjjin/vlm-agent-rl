@@ -5,7 +5,7 @@ import pytest
 from PIL import Image
 
 from vagen.evaluate.observation_ablation import ablate_images, shuffle_image_tiles
-from vagen.evaluate.run_eval import _job_resume_key, _parse_env_specs
+from vagen.evaluate.run_eval import _job_resume_key, _load_config, _parse_env_specs
 from vagen.evaluate.vision_workflow import GenericVisionInferenceWorkflow
 
 
@@ -141,3 +141,23 @@ async def test_workflow_applies_removal_before_model_and_records_it(tmp_path):
     metrics_paths = list(tmp_path.glob("*/metrics.json"))
     assert len(metrics_paths) == 1
     assert '"observation_ablation": "remove"' in metrics_paths[0].read_text()
+
+
+def test_indexed_eval_override_updates_env_list_in_place(tmp_path):
+    config = tmp_path / "eval.yaml"
+    config.write_text(
+        "envs:\n"
+        "  - name: Sokoban\n"
+        "    n_envs: 60\n"
+        "    tag_id: base\n"
+        "    observation_ablation: none\n"
+    )
+    loaded = _load_config(
+        str(config),
+        [
+            "envs.0.n_envs=2",
+            "envs.0.observation_ablation=shuffle_tiles",
+        ],
+    )
+    assert loaded.envs[0].n_envs == 2
+    assert loaded.envs[0].observation_ablation == "shuffle_tiles"
