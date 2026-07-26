@@ -14,6 +14,11 @@ if ! command -v conda >/dev/null 2>&1; then
   exit 1
 fi
 
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install --yes libvulkan1 vulkan-tools
+fi
+
 FREE_GB="$(df -Pk "${ROOT_DIR}" | awk 'NR==2 {printf "%d", $4/1024/1024}')"
 if (( FREE_GB < MIN_FREE_GB )); then
   echo "[ERROR] Only ${FREE_GB} GiB is free; at least ${MIN_FREE_GB} GiB is required." >&2
@@ -46,6 +51,8 @@ python -m pip install \
   "setuptools<81" \
   "transformers==4.57.1" \
   "trl==0.26.2" \
+  "ai2thor==5.0.0" \
+  "fire==0.7.1" \
   "uvicorn<0.41" \
   "pytest==8.4.1" \
   "pytest-asyncio==1.1.0" \
@@ -63,6 +70,9 @@ PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" python -m pytest -q \
 
 if [[ "${DOWNLOAD_MODEL:-0}" == "1" ]]; then
   huggingface-cli download "${MODEL_PATH:-Qwen/Qwen2.5-VL-3B-Instruct}"
+fi
+if [[ "${PRELOAD_NAVIGATION:-0}" == "1" ]]; then
+  python -m vagen.envs.navigation.pre_download_scenes
 fi
 
 echo "[OK] AutoDL bootstrap completed in conda env '${ENV_NAME}'."

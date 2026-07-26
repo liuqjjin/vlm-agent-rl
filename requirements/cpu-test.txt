@@ -13,6 +13,7 @@ codetiming==1.4.0
 gym==0.26.2
 gymnasium==1.2.0
 gym-sokoban==0.0.6
+fire==0.7.1
 imageio==2.37.4
 pillow==11.3.0
 einops==0.8.1

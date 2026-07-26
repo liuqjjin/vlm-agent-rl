@@ -21,7 +21,11 @@ fi
 import json
 import platform
 
+import fastapi
+import fire
+import httpx
 import numpy
+import openai
 import ray
 import tensordict
 import torch
@@ -31,6 +35,10 @@ print(json.dumps({
     "platform": platform.platform(),
     "python": platform.python_version(),
     "numpy": numpy.__version__,
+    "fastapi": fastapi.__version__,
+    "fire": fire.__version__,
+    "httpx": httpx.__version__,
+    "openai": openai.__version__,
     "torch": torch.__version__,
     "cuda_available": torch.cuda.is_available(),
     "ray": ray.__version__,
