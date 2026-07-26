@@ -1,261 +1,169 @@
-<h1 align="center">VAGEN: Reinforcing World Model Reasoning for Multi-Turn VLM Agents</h1>
-<!-- <p align="center" style="font-size: 30px;">
-  <b>Training VLM agents with multi-turn reinforcement learning</b>
-</p>
-<p align="center" style="font-size: 10px;">
-  <b>NeurIPS 2025</b>
-</p> -->
-<h3 align="center"><b>Training VLM agents with multi-turn reinforcement learning</b></h3>
-<h4 align="center"><b>🔥 NeurIPS 2025 🔥</b></h4>
+# vlm-agent-rl
 
-<p align="center" style="font-size: 16px;">
-  Kangrui Wang*, Pingyue Zhang*, Zihan Wang*, Yaning Gao*, Linjie Li*, Qineng Wang, Hanyang Chen, Chi Wan, Yiping Lu, Zhengyuan Yang, Lijuan Wang, Ranjay Krishna, Jiajun Wu, Li Fei-Fei, Yejin Choi, Manling Li
-</p>
-<p align="center" style="font-size: 12px;"><i>(* equal contribution)</i></p>
+Reliable credit assignment for short-context, multi-turn vision-language agents.
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2510.16907"><img src="https://img.shields.io/badge/📜_Paper-B31B1B?style=for-the-badge&logo=arXiv&logoColor=white" alt="Paper"></a>
-  <a href="https://vagen.readthedocs.io/en/latest"><img src="https://img.shields.io/badge/📚_Documentation-4285F4?style=for-the-badge&logoColor=white" alt="Documentation"></a>
-  <a href="https://mll-lab.notion.site/vagen"><img src="https://img.shields.io/badge/📝_Blog-FF5722?style=for-the-badge&logoColor=white" alt="Blog"></a>
-  <a href="https://wandb.ai/ragen-V/vagen-final/reports/VAGEN-Experimental-Results--VmlldzoxMzM2NzczNA?accessToken=c9539vj7s3yxh8qu4rykmgi1kz47935mu9pvkind70m2tt6bdin6tx263ec7yqei"><img src="https://img.shields.io/badge/📊_Experiment_Log-FB8C00?style=for-the-badge&logoColor=white" alt="Experiment Log"></a>
-  <a href="https://vagen-ai.github.io/"><img src="https://img.shields.io/badge/🌐_Website-00C851?style=for-the-badge&logoColor=white" alt="Website"></a>
-</p>
+This repository is a research fork of [VAGEN](https://github.com/mll-lab-nu/VAGEN). It studies the trade-off between concatenating an entire trajectory and training on independent, short per-turn contexts. The implementation keeps VAGEN’s Ray/FSDP/SGLang infrastructure and concentrates the project delta in tested extension points: sparse critic supervision, trajectory reconstruction, group-relative advantages, policy-loss weighting, parity gates, and analysis.
 
-**VAGEN** is a **reinforcement learning (RL) framework that trains multi-turn VLM agents** (vision-language model agents) to build an internal **world model** through explicit visual state reasoning. Instead of rewarding only task success, VAGEN reinforces the agent's world model reasoning itself, decomposed into **StateEstimation** ("what is the current state?") and **TransitionModeling** ("what comes next?"), with a turn-level **WorldModeling Reward** (LLM-as-Judge) and **Bi-Level GAE** for turn-aware credit assignment. Combining world models with reinforcement learning, a 3B VLM trained with VAGEN scores **0.82** across five visual agent benchmarks, a 3x improvement over its untrained backbone (0.21), outperforming GPT-5 (0.75), Gemini 2.5 Pro (0.67), and Claude 4.5 (0.62). Accepted to **NeurIPS 2025** ([arXiv:2510.16907](https://arxiv.org/abs/2510.16907)).
+The first formal visual model is `Qwen/Qwen2.5-VL-3B-Instruct`. Qwen3-VL is deliberately rejected by the no-concat entry point until its processor, M-RoPE position IDs, and rollout/training log-probability parity are validated.
 
-<div style="width:100%; overflow-x:auto;">
-  <table style="width:100%;">
-    <tr>
-      <td align="center" style="width:20%;"><br>
-        <img src="https://github.com/user-attachments/assets/6d72800a-9b4d-45ec-b528-ac81efb93966" style="width:72%;"/><br>
-        <img src="https://github.com/user-attachments/assets/6f283f99-fa15-4e26-9f99-6649a7d72374" style="width:72%;"/><br>
-        <b>FrozenLake</b>
-      </td>
-      <td align="center" style="width:20%;"><br>
-        <img src="https://github.com/user-attachments/assets/b364e6c9-4c2c-46d0-afca-ee42f271c59c" style="width:75%;"/><br>
-        <img src="https://github.com/user-attachments/assets/65662eb0-9440-4555-9436-8b9272791ac4" style="width:75%;"/><br>
-        <b>Navigation</b>
-      </td>
-      <td align="center" style="width:20%;"><br>
-        <img src="https://github.com/user-attachments/assets/145352b5-3a9e-4248-bb94-d3fa46e6c493" style="width:80%;"/><br>
-        <img src="https://github.com/user-attachments/assets/676de052-37d6-4c99-a7eb-200a58d11ed4" style="width:80%;"/><br>
-        <b>Sokoban</b>
-      </td>
-      <td align="center" style="width:20%;"><br>
-        <img src="https://github.com/user-attachments/assets/c597f17d-5c62-4319-bdaa-b7fa8e4564e1" style="width:80%;"/><br>
-        <img src="https://github.com/user-attachments/assets/f61ea55c-ea79-4ead-9345-45be06d24e81" style="width:80%;"/><br>
-        <b>ManiSkill</b>
-      </td>
-      <td align="center" style="width:20%;"><br>
-        <img src="https://github.com/user-attachments/assets/8646da5f-69be-4283-a078-969f9b8f3f3b" style="width:92%;"/><br>
-        <img src="https://github.com/user-attachments/assets/691b896a-ce30-4acc-ac49-af2d89452bdd" style="width:92%;"/><br>
-        <b>SVG</b>
-      </td>
-    </tr>
-  </table>
-</div>
+## What is implemented
 
-We introduce **VAGEN**, a multi-turn reinforcement learning framework designed specifically for training vision-language model (VLM) agents. Built upon this framework, we propose **World Modeling RL**, a novel reinforcement learning approach that significantly improves the multi-turn performance of VLMs by explicitly supervising their worldmodel reasoning process, as shown in **Figure&nbsp;1**.
+- A regression-tested repair for both `value_mask` breaks in no-concat GAE. Ignored `-100` return positions no longer reach the critic loss.
+- Critic-free no-concat episode GRPO that reconstructs complete `(group_idx, traj_idx)` trajectories before computing group statistics.
+- Token-weighted, turn-balanced, and trajectory-balanced policy objectives with padding-duplicate invariance.
+- Outcome-only, bounded-process, and format-gated trajectory rewards for the Sokoban length-bias ablation.
+- A first-update rollout-versus-training log-probability gate with mean, median, P95, P99, absolute log-probability delta, and pre-update clip fraction.
+- Canonical, text-only pre-action state anchors for visual Sokoban and Navigation, including the remaining turn budget; a data preflight blocks state-relative training when the signal is not identifiable.
+- Deterministic image-removal and tile-shuffle evaluations, GPU/VRAM accounting, rollout-quality analysis, and representative failure extraction.
+- A smoke → screening → confirmatory experiment funnel for Sokoban and partially observable AI2-THOR Navigation.
 
-We frame multi-turn VLM agentic tasks as a Partially Observable Markov Decision Process (POMDP), shown in **Figure&nbsp;2**.
-| <img src="https://github.com/user-attachments/assets/834b32fa-9bfc-4e0f-a148-99cd6fc3141e" alt="Framework Overview" height="260"> | <img src="https://github.com/user-attachments/assets/d99ee757-ecd1-433c-8a6d-981bf383748e" alt="POMDP Formulation" height="260"> |
-|:--:|:--:|
-| <sub><b>Figure 1.</b> Overview of the VAGEN framework.</sub> | <sub><b>Figure 2.</b> POMDP formulation of multi-turn VLM agentic tasks.</sub> |
+The detailed data flow is in [ARCHITECTURE.md](ARCHITECTURE.md), and the evidence behind each choice is in [DECISIONS.md](DECISIONS.md).
 
+## Current evidence
 
+The local machine is Apple arm64 without CUDA. All CPU-valid experiments were run; visual model inference and training remain explicitly pending rather than being estimated.
 
+| CPU check | Observed result | Raw evidence |
+|---|---:|---|
+| Full CPU smoke | 58 tests passed | `scripts/run_smoke.sh` |
+| Ignored critic value after 20 updates | fixed `0.500`; legacy `-87.782` | [value_mask_steps.csv](results/cpu/20260727-mac-arm64/raw/value_mask_steps.csv) |
+| Supervised critic value after 20 updates | `1.965` toward target `2.0` | [summary.json](results/cpu/20260727-mac-arm64/summary.json) |
+| Extra reward from splitting the same shortest path | mean `+0.245`; positive on 20/20 seeds | [sokoban_reward_pairs.csv](results/cpu/20260727-mac-arm64/raw/sokoban_reward_pairs.csv) |
+| Length delta after outcome/bounded-process/format-gate reduction | mean `0.000` for all three in this controlled set | [summary.json](results/cpu/20260727-mac-arm64/summary.json) |
 
-## News
-**[2026/02]** We have migrated the `main` branch to VAGEN-Lite, a lightweight and clean reimplementation built on VERL agent-loop for easy customization and stable performance. For the previous full-featured release, please visit the [vagen-legacy](https://github.com/mll-lab-nu/VAGEN/tree/vagen-legacy) branch.
+![CPU diagnostics](results/cpu/20260727-mac-arm64/cpu_diagnostics.svg)
 
-**[2025/12]** Introducing [VAGEN-Lite](https://github.com/mll-lab-nu/VAGEN/tree/vagen-lite): a lightweight and clean reimplementation of VAGEN, built on the VERL agent-loop for easy customization and stable performance.
+The required GPU table is checked in with null values and `pending-external-gpu` status at [results/main_results.csv](results/main_results.csv). No visual success, VRAM, GPU-hour, mean-turn, or ratio value is claimed before a traceable run exists.
 
-**[2025/09]** VAGEN is accepted by Neurips 2025
+| Method | Visual Success | Peak VRAM | GPU·h | Mean Turns | Ratio P95 |
+|---|---:|---:|---:|---:|---:|
+| Base Qwen2.5-VL-3B | pending | pending | pending | pending | n/a |
+| concat GRPO | pending | pending | pending | pending | pending |
+| fixed no-concat GAE | pending | pending | pending | pending | pending |
+| no-concat episode GRPO | pending | pending | pending | pending | pending |
 
-**[2025/04]** We've introduced a new modular design for environments and services in VAGEN:
-- Enhanced environment framework for easier creation of custom environments
-- New service architecture for efficient distributed training
-- Check out our new guides:
-  - [Creating Environments](./docs/envs/create-env.md): New environment protocal.
-  - [Creating Services](./docs/envs/create-service.md): We now support hosting environments in a separate process
+The table applies separately to Sokoban and Navigation. See [EXPERIMENTS.md](EXPERIMENTS.md) for seeds, gates, and the reporting protocol.
 
-**[2025/03]** We release VAGEN, a multi-turn reinforcement learning framework for training VLM Agents!
+## Architecture
 
-## Installation
+```mermaid
+flowchart LR
+    E["Visual environment"] --> L["VAGEN agent loop"]
+    L --> C{"Context policy"}
+    C -->|"concat"| CT["one row / trajectory"]
+    C -->|"no-concat"| NT["one row / turn"]
+    NT --> R["exact trajectory reconstruction"]
+    CT --> A["GRPO"]
+    R --> G["no-concat GAE or episode GRPO"]
+    A --> P["rollout/train parity gate"]
+    G --> P
+    P -->|"pass"| U["actor / optional critic update"]
+    P -->|"fail"| X["abort before update"]
+```
+
+The important no-concat invariant is that a row is a turn, not a trajectory. Episode statistics are therefore computed only after exact duplicate removal, contiguous-turn checks, one-terminal-marker checks, and `rollout.n` completeness checks.
+
+## CPU quick start
 
 ```bash
-conda create -n vagen python=3.12 -y
-conda activate vagen
+git clone --recurse-submodules https://github.com/liuqjjin/vlm-agent-rl.git
+cd vlm-agent-rl
 
-git clone https://github.com/mll-lab-nu/VAGEN.git
-cd VAGEN
-git submodule update --init --recursive
-
-cd verl
-USE_MEGATRON=0 bash scripts/install_vllm_sglang_mcore.sh
-pip install --no-deps -e .
-cd ..
-pip install -e .
-pip install "trl==0.26.2"
+bash scripts/setup_cpu_env.sh
+conda run -n vagen bash scripts/run_smoke.sh
 ```
 
-
-## Quick Start
-
-### Training
-VAGEN currently supports PPO / GRPO with two multi-turn training paradigms:
-
-**Multi-turn Concatenated Training**: All turns in a trajectory are concatenated into a single training instance.
+Reproduce the committed CPU artifacts:
 
 ```bash
-# Qwen/Qwen2.5-VL-3B-Instruct
-cd VAGEN
-bash examples/train/sokoban/train_ppo_qwen25vl3b.sh
+conda run -n vagen python -m vagen.analysis.run_cpu_experiments \
+  --output-dir results/cpu/reproduction \
+  --seed-start 0 \
+  --seed-count 20
 ```
+
+The experiment uses a stable retry-seed hash. Its raw outputs were also checked under two different `PYTHONHASHSEED` values.
+
+## CUDA quick start
+
+Use a Linux NVIDIA machine with at least 100 GiB free disk; an 80 GiB GPU is the conservative single-GPU choice for the critic-bearing comparison. On the machine:
 
 ```bash
-# Qwen/Qwen3-VL-4B-Instruct
-# pip install transformers==4.57.1
-# pip install "sglang[all]==0.5.3.post3"
-cd VAGEN
-bash examples/train/sokoban/train_grpo_qwen3vl4b.sh
+DOWNLOAD_MODEL=1 PRELOAD_NAVIGATION=1 bash scripts/autodl_bootstrap.sh
+bash scripts/run_experiment_matrix.sh smoke
 ```
+
+Inspect every declared run before spending GPU time:
 
 ```bash
-# Enable reward variance based top-p filtering
-cd VAGEN
-bash examples/train/frozenlake/train_grpo_qwen25vl3b_filtertopp_vision.sh
+bash scripts/run_experiment_matrix.sh describe
+bash scripts/run_experiment_matrix.sh dry-run
 ```
 
-
-**Multi-turn Non-Concatenated Training**: Each trajectory is split into multiple turn-level training instances.
+Then run the funnel:
 
 ```bash
-cd VAGEN
-bash examples/train/sokoban/train_ppo_no_concat_qwen25vl3b.sh
-```
-### Evaluation
+bash scripts/run_experiment_matrix.sh base-eval
+bash scripts/run_experiment_matrix.sh core-screening
+bash scripts/run_experiment_matrix.sh episode-screening
 
-VAGEN supports evaluation using different backends (OpenAI, Claude, Gemini, sglang, vLLM). For details, see [vagen/evaluate/README.md](vagen/evaluate/README.md).
+# Only after selecting the screening winner:
+SELECTED_METHODS=no_concat_episode_grpo \
+  bash scripts/run_experiment_matrix.sh confirmatory
+```
+
+The Navigation server is started and stopped by the matrix runner when necessary. Formal training has `filter.enable=False`, parity gating enabled, offline W&B by default, per-run manifests, raw rollouts, parity JSON, and GPU samples.
+
+Run the visual-dependence checks on a selected checkpoint:
 
 ```bash
-cd VAGEN
-# FrozenLake evaluation with sglang
-bash examples/evaluate/frozenlake/eval_qwen25_vl_3b.sh
+EVAL_MODEL_PATH=/absolute/path/to/hf_model \
+  bash scripts/run_experiment_matrix.sh anti-cheat
 ```
+
+Summarize completed runs:
 
 ```bash
-cd VAGEN
-# Sokoban evaluation
-bash examples/evaluate/sokoban/run_eval.sh
-
+bash scripts/run_experiment_matrix.sh analyze \
+  --run exps/vlm_agent_rl/<run-name>
 ```
 
-## Customizing Your Environment
+If a W&B key was unavailable during training, local logs are complete. They can be uploaded later with:
 
-To train on your own environment, follow the steps below.
-
-### 1. Create Your Environment Class
-
-* Use `GymImageEnv` as the base class:
-
-  * [`vagen/envs/gym_image_env.py`](vagen/envs/gym_image_env.py)
-* Refer to Sokoban for a full implementation example:
-
-  * [`vagen/envs/sokoban/sokoban_env.py`](vagen/envs/sokoban/sokoban_env.py)
-
-
-### 2. Register the Environment
-
-Add your environment entry to:
-
-```yaml
-vagen/configs/env_registry.yaml
+```bash
+WANDB_API_KEY=... bash scripts/sync_wandb.sh
 ```
 
-### 3. Create Configuration Files
+AutoDL-specific external actions are reduced to the checklist in [USER_ACTIONS.md](USER_ACTIONS.md).
 
-Prepare training and validation configs:
+## Repository map
 
-* `train.yaml`
-* `val.yaml`
+- `vagen/custom_advantage/no_concat_episode_grpo.py` — trajectory reconstruction, reward reduction, and objective weights.
+- `vagen/utils/logprob_parity.py` — ratio metrics, gate, and first-update report.
+- `vagen/analysis/` — state-relative preflight, CPU evidence suite, and rollout/failure analysis.
+- `scripts/run_training_method.sh` — one pinned entry point for the three trained core methods.
+- `experiments/matrix.yaml` — declarative funnel, seeds, invariants, and thresholds.
+- `results/` — committed raw CPU data and the GPU result registry.
+- `verl/` — the pinned VAGEN verl submodule with two small, separately licensed changes.
 
-You can follow the Sokoban examples as templates:
+## Reproducibility and limits
 
-* [`examples/train/sokoban/train_sokoban_vision.yaml`](examples/train/sokoban/train_sokoban_vision.yaml)
-* [`examples/train/sokoban/val_sokoban_vision.yaml`](examples/train/sokoban/val_sokoban_vision.yaml)
+- Exact upstream commits, local submodule delta, licenses, and dependency pins are recorded in [UPSTREAM.md](UPSTREAM.md).
+- The current workstation cannot execute CUDA/SGLang, so the GPU smoke, model baseline, parity measurement, state-relative base-policy preflight, training, and visual failure cases are not complete.
+- The state-relative method is intentionally not implemented past its preflight gate. A canonical anchor alone does not prove that comparable states, diverse actions, and return variance occur in model rollouts.
+- Tile shuffle is a deterministic spatial-destruction control, not a cross-episode image-permutation test.
+- `gym-sokoban` is unmaintained and requires NumPy 1.x and `setuptools<81`; both are pinned.
 
+## Upstream and license
 
-### 4. Create a Training Script
+The top-level project remains under VAGEN’s MIT license in [LICENSE](LICENSE). The `verl/` submodule is Apache-2.0 and retains its license and notice. VAGEN and verl-agent authors are credited in [UPSTREAM.md](UPSTREAM.md) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Write your training script based on:
-
-* [`examples/train/sokoban/train_ppo_qwen25vl3b.sh`](examples/train/sokoban/train/train_ppo_qwen25vl3b.sh)
-
-
-## More Customization
-
-See the [Documentation](https://vagen.readthedocs.io/) for more customization options:
-
-- [Custom Filter](https://vagen.readthedocs.io/en/latest/custom-filter/) — Trajectory filtering (e.g., Reward Variance (RV) filter in [RAGEN](https://github.com/RAGEN-AI/RAGEN))
-- [Custom Metric](https://vagen.readthedocs.io/en/latest/custom-metric/) - Add W&B logging metrics
-- [Configuration](https://vagen.readthedocs.io/en/latest/configuration/) - Training configuration reference
-
-## Useful Configs
-refer to `vagen/configs/vagen_multiturn.yaml`
-
-### No Concat Mode
-```yaml
-# Enable no concat mode: input is system prompt + current step observation
-trainer:
-  concat_multi_turn: False
-# Currently only supported with algorithm.adv_estimator=no_concat_gae
-
-```
-
-### Image Logging
-```yaml
-# Warning:
-# - If you set a training-data rollout dir AND enable image logging, training images will also be dumped to disk.
-#   This can consume a large amount of storage very quickly. Monitor disk usage and consider cleanup/limits.
-trainer:
-  log_image:
-    enable: false      # true can enable saving rollout/validation images to disk
-    max_pending: 2     # max concurrent async image dump tasks
-    png_compress_level: 0  # PNG compression (0 = fastest, 9 = smallest)
-```
-
-### HuggingFace Hub Upload
-```yaml
-# export HF_TOKEN=xxx
-huggingface_hub:
-  hf_save_freq: null   # upload every N steps (must be a multiple of trainer.save_freq); null = disabled
-  repo_id: null        
-  private: false        
-```
-
-### Training Data Filtering
-```yaml
-
-filter:
-  name: reward_variance_top_p # refer to vagen/custom_filter
-  filter_kwargs: 
-    top_p: 0.9 
-  enable: False # set to true to enable filtering, recommended for grpo trainining
-```
-
-
-## Known Issues & Fixes
-See [docs/issues.md](docs/issues.md)
-
-## Citation
-
-If you find our framework and paper useful, we appreciate it if you could cite our work:
+If you use the underlying framework, cite the VAGEN paper:
 
 ```bibtex
 @inproceedings{wang2025vagen,
   title={VAGEN: Reinforcing World Model Reasoning for Multi-Turn VLM Agents},
-  author={Kangrui Wang and Pingyue Zhang and Zihan Wang and Yaning Gao and Linjie Li and Qineng Wang and Hanyang Chen and Yiping Lu and   Zhengyuan Yang and Lijuan Wang and Ranjay Krishna and Jiajun Wu and Li Fei-Fei and Yejin Choi and Manling Li},
+  author={Kangrui Wang and Pingyue Zhang and Zihan Wang and Yaning Gao and Linjie Li and Qineng Wang and Hanyang Chen and Yiping Lu and Zhengyuan Yang and Lijuan Wang and Ranjay Krishna and Jiajun Wu and Li Fei-Fei and Yejin Choi and Manling Li},
   booktitle={The Thirty-ninth Annual Conference on Neural Information Processing Systems},
   year={2025},
   url={https://arxiv.org/abs/2510.16907}
