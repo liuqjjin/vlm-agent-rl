@@ -7,7 +7,7 @@ envs:
   - name: Sokoban
     n_envs: 128
     tag_id: sokoban_test
-    seed: [10000, 10128, 1]
+    seed: [10001, 10128, 1]
     split: test
     max_turns: 5
     config:

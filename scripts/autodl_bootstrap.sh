@@ -47,8 +47,9 @@ USE_MEGATRON=0 USE_SGLANG=1 bash scripts/install_vllm_sglang_mcore.sh
 python -m pip install --no-deps --editable .
 popd >/dev/null
 
+python -m pip install --requirement "${ROOT_DIR}/requirements/cpu-test.txt"
 python -m pip install \
-  "setuptools<81" \
+  "opencv-python==4.11.0.86" \
   "transformers==4.57.1" \
   "trl==0.26.2" \
   "ai2thor==5.0.0" \
@@ -58,6 +59,7 @@ python -m pip install \
   "pytest-asyncio==1.1.0" \
   "ruff==0.12.7"
 python -m pip install --editable "${ROOT_DIR}"
+python -m pip check
 
 python -m pip freeze > "${ROOT_DIR}/artifacts/environment/gpu-pip-freeze.txt"
 nvidia-smi -q > "${ROOT_DIR}/artifacts/environment/nvidia-smi.txt"
@@ -69,7 +71,14 @@ PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" python -m pytest -q \
   "${ROOT_DIR}/vagen/tests/test_logprob_parity.py"
 
 if [[ "${DOWNLOAD_MODEL:-0}" == "1" ]]; then
-  huggingface-cli download "${MODEL_PATH:-Qwen/Qwen2.5-VL-3B-Instruct}"
+  BOOTSTRAP_MODEL_PATH="${MODEL_PATH:-Qwen/Qwen2.5-VL-3B-Instruct}" \
+    python - <<'PY'
+import os
+
+from huggingface_hub import snapshot_download
+
+snapshot_download(repo_id=os.environ["BOOTSTRAP_MODEL_PATH"])
+PY
 fi
 if [[ "${PRELOAD_NAVIGATION:-0}" == "1" ]]; then
   python -m vagen.envs.navigation.pre_download_scenes

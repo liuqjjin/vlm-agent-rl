@@ -27,6 +27,11 @@ policy objective ∈ {token, turn, trajectory}
 ```
 
 No existing reward-variance filter is used because it operates before no-concat trajectory reconstruction.
+The format gate uses each environment's actual per-turn format reward, recorded
+in the run manifest, rather than a cross-environment constant.
+The normalized episode policy-weight path is fail-closed to one GPU until its
+cross-rank scaling is validated; the declared funnel is therefore a single-GPU
+protocol.
 
 ## Environments and held-out seeds
 
@@ -35,7 +40,7 @@ No existing reward-variance filter is used because it operates before no-concat 
 - visual 6×6 rooms, one box;
 - train config: `examples/train/sokoban/train_sokoban_vision.yaml`;
 - validation config: `examples/train/sokoban/val_sokoban_vision.yaml`;
-- standalone base evaluation: seeds `[10000, 10128)`;
+- standalone evaluation: 128 held-out seeds `[10001, 10129)`;
 - success and successful-trajectory mean turns are primary behavioral metrics.
 
 ### Navigation
@@ -43,10 +48,15 @@ No existing reward-variance filter is used because it operates before no-concat 
 - egocentric RGB AI2-THOR, partially observable;
 - base split only for the first controlled comparison;
 - train seeds `[0, 30)`, validation seeds `[30, 60)`;
-- standalone base evaluation covers seeds `[0, 60)`;
+- standalone evaluation covers the 30 held-out seeds `[30, 60)`;
 - the remote protocol transports canonical pose anchors but never exposes them to the model.
 
-The same held-out seed sets are reused across methods.
+The same held-out seed sets are reused for the base model and every trained
+method. They are disjoint from each environment's training seed domain.
+
+The confirmatory `SEED` controls Python hashing and training-dataloader order.
+It is recorded as such in `manifest.json`; asynchronous inference and CUDA
+kernels are not claimed to be bitwise deterministic.
 
 ## Funnel
 
@@ -60,7 +70,7 @@ conda run -n vagen bash scripts/run_smoke.sh
 
 This covers trajectory reconstruction, incomplete groups, duplicates, zero variance, critic masks, 20-step dynamics, objective weights, microbatch invariance, parity metrics/reporting, processor guard, deterministic environment seeding, state anchors, remote transport, observation ablation, GPU metric parsing, and rollout analysis.
 
-Current result: **58 passed**.
+Current result: **97 passed**.
 
 ### 2. GPU smoke
 
@@ -222,7 +232,8 @@ Default abort thresholds are recorded in the run manifest/config and in `parity.
 
 ### Resources
 
-`scripts/run_with_gpu_metrics.py` polls every visible device:
+`scripts/run_with_gpu_metrics.py` polls only devices selected by
+`CUDA_VISIBLE_DEVICES` (or all devices when it is unset):
 
 - peak VRAM by device and overall;
 - wall-clock duration;
@@ -231,6 +242,8 @@ Default abort thresholds are recorded in the run manifest/config and in `parity.
 - trapezoidal power-based energy estimate.
 
 GPU-hours describe occupied devices, not normalized accelerator-equivalent compute.
+If GPU sampling never succeeds, GPU-hours and peak VRAM remain null rather than
+being reported as zero.
 
 ## Result schema
 
@@ -246,11 +259,16 @@ Every non-null row must be traceable to:
 
 - parent and verl commits;
 - `manifest.json`;
-- exact train/eval config and seed;
+- exact `train_command.sh`/`eval_command.sh`, resolved train/eval config, and seed;
 - raw rollout or episode files;
 - `parity.json` for trained methods;
 - `gpu_summary.json`;
 - local W&B directory or synced run.
+
+The analyzer marks a row `complete` only when the declared episode count (or
+final training step), clean source provenance, both commits, nonempty replay
+command and resolved config, valid GPU samples, and—where applicable—a passed
+parity gate are all present. Partial or failed runs remain explicitly labeled.
 
 ## Completed CPU results
 

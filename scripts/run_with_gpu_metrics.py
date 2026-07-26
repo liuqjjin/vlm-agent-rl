@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import subprocess
 import sys
 import time
@@ -23,6 +24,31 @@ QUERY_FIELDS = (
 )
 
 
+def parse_visible_devices(value: str | None) -> list[str] | None:
+    """Translate CUDA visibility into selectors accepted by ``nvidia-smi``.
+
+    ``None`` means the variable is unset and all host devices are intentionally
+    sampled. An empty list means CUDA explicitly hides every device.
+    """
+    if value is None or value.strip().lower() == "all":
+        return None
+    normalized = value.strip()
+    if not normalized or normalized.lower() in {"-1", "none", "void"}:
+        return []
+    selectors = [item.strip() for item in normalized.split(",") if item.strip()]
+    if len(selectors) != len(set(selectors)):
+        raise ValueError(f"CUDA_VISIBLE_DEVICES contains duplicates: {value!r}")
+    return selectors
+
+
+def _optional_float(value: str) -> float | None:
+    return (
+        None
+        if value.strip().lower() in {"", "n/a", "[n/a]", "not supported"}
+        else float(value)
+    )
+
+
 def parse_nvidia_smi_rows(output: str, elapsed_seconds: float) -> list[dict[str, Any]]:
     """Parse numeric no-unit nvidia-smi rows into timestamped samples."""
     rows: list[dict[str, Any]] = []
@@ -38,8 +64,8 @@ def parse_nvidia_smi_rows(output: str, elapsed_seconds: float) -> list[dict[str,
                     "gpu_name": fields[1],
                     "memory_used_mib": float(fields[2]),
                     "memory_total_mib": float(fields[3]),
-                    "utilization_percent": float(fields[4]),
-                    "power_watts": float(fields[5]),
+                    "utilization_percent": _optional_float(fields[4]),
+                    "power_watts": _optional_float(fields[5]),
                 }
             )
         except ValueError:
@@ -47,13 +73,23 @@ def parse_nvidia_smi_rows(output: str, elapsed_seconds: float) -> list[dict[str,
     return rows
 
 
-def sample_gpus(elapsed_seconds: float) -> list[dict[str, Any]]:
-    result = subprocess.run(
+def sample_gpus(
+    elapsed_seconds: float,
+    device_selectors: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    if device_selectors == []:
+        return []
+    command = ["nvidia-smi"]
+    if device_selectors is not None:
+        command.append(f"--id={','.join(device_selectors)}")
+    command.extend(
         [
-            "nvidia-smi",
             f"--query-gpu={','.join(QUERY_FIELDS)}",
             "--format=csv,noheader,nounits",
-        ],
+        ]
+    )
+    result = subprocess.run(
+        command,
         check=True,
         capture_output=True,
         text=True,
@@ -76,7 +112,27 @@ def summarize_samples(
         )
         for device in devices
     }
+    names = {
+        str(device): next(
+            str(row["gpu_name"])
+            for row in samples
+            if int(row["gpu_index"]) == device
+        )
+        for device in devices
+    }
+    mean_utilization = {}
+    for device in devices:
+        values = [
+            float(row["utilization_percent"])
+            for row in samples
+            if int(row["gpu_index"]) == device
+            and row["utilization_percent"] is not None
+        ]
+        mean_utilization[str(device)] = (
+            sum(values) / len(values) if values else None
+        )
     energy_wh = 0.0
+    has_power_samples = False
     for device in devices:
         device_rows = sorted(
             (
@@ -87,6 +143,9 @@ def summarize_samples(
             key=lambda row: row["elapsed_seconds"],
         )
         for left, right in zip(device_rows, device_rows[1:]):
+            if left["power_watts"] is None or right["power_watts"] is None:
+                continue
+            has_power_samples = True
             delta_hours = (
                 right["elapsed_seconds"] - left["elapsed_seconds"]
             ) / 3600.0
@@ -97,10 +156,14 @@ def summarize_samples(
     return {
         "duration_seconds": duration_seconds,
         "gpu_count": len(devices),
-        "gpu_hours": duration_hours * len(devices),
+        "gpu_hours": duration_hours * len(devices) if devices else None,
         "peak_vram_mib": max(peaks.values(), default=None),
         "peak_vram_mib_by_device": peaks,
-        "energy_kwh_estimate": energy_wh / 1000.0 if samples else None,
+        "gpu_name_by_device": names,
+        "mean_utilization_percent_by_device": mean_utilization,
+        "energy_kwh_estimate": (
+            energy_wh / 1000.0 if has_power_samples else None
+        ),
         "sample_count": len(samples),
     }
 
@@ -135,6 +198,8 @@ def main() -> int:
         parser.error("--interval must be positive")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    visible_devices_raw = os.environ.get("CUDA_VISIBLE_DEVICES")
+    device_selectors = parse_visible_devices(visible_devices_raw)
     start = time.monotonic()
     process = subprocess.Popen(command)
     samples: list[dict[str, Any]] = []
@@ -143,7 +208,7 @@ def main() -> int:
     while process.poll() is None:
         elapsed = time.monotonic() - start
         try:
-            samples.extend(sample_gpus(elapsed))
+            samples.extend(sample_gpus(elapsed, device_selectors))
         except Exception as error:
             sample_errors.append(repr(error))
         try:
@@ -153,7 +218,7 @@ def main() -> int:
 
     duration = time.monotonic() - start
     try:
-        samples.extend(sample_gpus(duration))
+        samples.extend(sample_gpus(duration, device_selectors))
     except Exception as error:
         sample_errors.append(repr(error))
 
@@ -165,6 +230,8 @@ def main() -> int:
             "return_code": process.returncode,
             "sampling_interval_seconds": args.interval,
             "sampling_errors": sample_errors,
+            "cuda_visible_devices": visible_devices_raw,
+            "sampled_device_selectors": device_selectors,
         }
     )
     (args.output_dir / "gpu_summary.json").write_text(
@@ -173,7 +240,7 @@ def main() -> int:
     print(
         "[GPU METRICS] "
         f"peak_vram_mib={summary['peak_vram_mib']} "
-        f"gpu_hours={summary['gpu_hours']:.6f} "
+        f"gpu_hours={summary['gpu_hours']} "
         f"return_code={process.returncode}",
         file=sys.stderr,
     )

@@ -5,9 +5,9 @@ fileroot: ${oc.env:HOME}/projects/vagen
 
 envs:
   - name: RemoteEnv
-    n_envs: 60
+    n_envs: 30
     tag_id: navigation_base
-    seed: [0, 60, 1]
+    seed: [30, 59, 1]
     max_turns: 10
     observation_ablation: none
     config:

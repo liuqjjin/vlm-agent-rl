@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="${CONFIG:-${SCRIPT_DIR}/../config_base.yaml}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 PORT="${PORT:-30000}"
 LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/logs}"
 MODEL_PATH="${MODEL_PATH:-Qwen/Qwen2.5-VL-3B-Instruct}"
@@ -12,6 +13,41 @@ TP_SIZE="${TP_SIZE:-1}"
 MEM_FRACTION="${MEM_FRACTION:-0.80}"
 DUMP_DIR="${DUMP_DIR:-${ROOT_DIR}/rollouts/qwen25_vl_3b_navigation}"
 mkdir -p "${LOG_DIR}" "${DUMP_DIR}"
+
+EVAL_OVERRIDES=(
+  run.backend=sglang
+  "backends.sglang.base_url=http://127.0.0.1:${PORT}/v1"
+  "backends.sglang.model=${MODEL_PATH}"
+  "experiment.dump_dir=${DUMP_DIR}"
+  "fileroot=${ROOT_DIR}"
+)
+
+if [[ "${CHECK_CONFIG_ONLY:-0}" == "1" ]]; then
+  PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" "${PYTHON_BIN}" \
+    -m vagen.evaluate.run_eval \
+    --check-config \
+    --config "${CONFIG}" \
+    "${EVAL_OVERRIDES[@]}" \
+    "$@"
+  exit 0
+fi
+
+if [[ -n "${CONFIG_CHECK_OUTPUT:-}" ]]; then
+  mkdir -p "$(dirname "${CONFIG_CHECK_OUTPUT}")"
+  PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" "${PYTHON_BIN}" \
+    -m vagen.evaluate.run_eval \
+    --check-config \
+    --config "${CONFIG}" \
+    "${EVAL_OVERRIDES[@]}" \
+    "$@" > "${CONFIG_CHECK_OUTPUT}"
+else
+  PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" "${PYTHON_BIN}" \
+    -m vagen.evaluate.run_eval \
+    --check-config \
+    --config "${CONFIG}" \
+    "${EVAL_OVERRIDES[@]}" \
+    "$@" >/dev/null
+fi
 
 if ! curl --silent --show-error --fail \
   "${NAVIGATION_SERVER_URL:-http://127.0.0.1:8000}/health" >/dev/null; then
@@ -22,7 +58,7 @@ fi
 SERVER_LOG="${LOG_DIR}/qwen25_vl_3b_server.log"
 EVAL_LOG="${LOG_DIR}/qwen25_vl_3b_eval.log"
 
-python -m sglang.launch_server \
+"${PYTHON_BIN}" -m sglang.launch_server \
   --host 0.0.0.0 \
   --log-level warning \
   --port "${PORT}" \
@@ -43,12 +79,8 @@ trap cleanup EXIT
 source "${SCRIPT_DIR}/../../frozenlake/sglang/wait_for_server.sh"
 wait_for_server
 
-PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" python -m vagen.evaluate.run_eval \
+PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" "${PYTHON_BIN}" -m vagen.evaluate.run_eval \
   --config "${CONFIG}" \
-  run.backend=sglang \
-  "backends.sglang.base_url=http://127.0.0.1:${PORT}/v1" \
-  "backends.sglang.model=${MODEL_PATH}" \
-  "experiment.dump_dir=${DUMP_DIR}" \
-  "fileroot=${ROOT_DIR}" \
+  "${EVAL_OVERRIDES[@]}" \
   "$@" \
   2>&1 | tee "${EVAL_LOG}"

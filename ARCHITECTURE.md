@@ -49,7 +49,8 @@ Every no-concat row has the following identity:
 - `traj_idx` identifies one of the `rollout.n` sampled trajectories.
 - `turn_idx` is contiguous within a trajectory.
 - `last_turn` is true exactly once and only on the final turn.
-- `traj_success` is trajectory outcome metadata copied to each emitted turn.
+- `traj_success` records whether that environment step reports success; episode
+  reduction takes `any(...)` across the reconstructed trajectory.
 - `state_anchor` is the canonical pre-action state for that row.
 
 The agent loop creates these fields. `ray_trainer.py` carries them through padding and logging. The advantage estimator consumes them but does not reinterpret their ownership.
@@ -112,7 +113,9 @@ Let `r_t` be VAGEN’s turn reward, with the success bonus removed from the fina
 
 - `outcome`: `1` for success, else `0`.
 - `bounded_process`: outcome plus the clipped sum of process rewards.
-- `format_gate`: outcome only if every turn meets the format-reward threshold.
+- `format_gate`: outcome only if every turn meets its environment's
+  per-turn format-reward threshold (`0.10` Sokoban, `0.02` FrozenLake,
+  `0.01` Navigation).
 
 These are experiment conditions, not interchangeable implementations. The controlled CPU experiment shows that all three remove the measured same-path turn-splitting delta on its 20 seeded rooms; model behavior still requires evaluation.
 
@@ -125,6 +128,8 @@ These are experiment conditions, not interchangeable implementations. The contro
 - `trajectory`: every trajectory has equal mass, divided across all its action tokens.
 
 The verl actor compensates for its token-mean reduction so the weighted policy-gradient sum is invariant to microbatch partitioning.
+The formal episode-GRPO entry point is restricted to one GPU until equivalent
+cross-rank scaling has been validated.
 
 ## Rollout/training parity
 
@@ -168,13 +173,23 @@ No state-relative advantage is enabled until real base-policy rows pass:
 Every training run writes:
 
 - `manifest.json`;
+- `train_command.sh`;
+- `resolved_config.yaml`;
 - `train.log`;
 - `parity.json`;
 - raw rollout/validation JSONL;
-- `gpu_metrics/gpu_samples.csv`;
+- `gpu_metrics/gpu_samples.csv`, scoped to `CUDA_VISIBLE_DEVICES`;
 - `gpu_metrics/gpu_summary.json`;
 - checkpoints according to the phase.
 
-Every local visual evaluation writes a manifest, episode metrics/transcripts/images, tag summary, and GPU metrics. Image removal and tile shuffle are applied before adapter formatting and are included in resume identity, so an unablated episode cannot incorrectly satisfy an ablated resume.
+The manifest distinguishes the controlled run seed (Python hashing and
+dataloader order) from bitwise CUDA determinism, which the asynchronous
+rollout stack does not promise.
+
+Every local visual evaluation writes `manifest.json`, `eval_command.sh`,
+`resolved_config.txt`, its log, episode metrics/transcripts/images, a tag
+summary, and GPU metrics. Image removal and tile shuffle are applied before
+adapter formatting and are included in resume identity, so an unablated
+episode cannot incorrectly satisfy an ablated resume.
 
 `vagen.analysis.analyze_rollouts` derives success, successful mean turns, invalid-action rate, template concentration, reward/turn correlation, group reward variance, and representative failures from these raw artifacts.

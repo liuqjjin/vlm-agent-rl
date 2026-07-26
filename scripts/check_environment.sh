@@ -17,8 +17,10 @@ if git submodule status | grep -Eq '^[+-]'; then
   exit 1
 fi
 
-"${PYTHON_BIN}" - <<'PY'
+CHECK_REQUIRE_GPU="${REQUIRE_GPU}" "${PYTHON_BIN}" - <<'PY'
+import importlib
 import json
+import os
 import platform
 
 import fastapi
@@ -30,6 +32,19 @@ import ray
 import tensordict
 import torch
 import transformers
+
+require_gpu = os.environ["CHECK_REQUIRE_GPU"] == "1"
+if require_gpu and not torch.cuda.is_available():
+    raise RuntimeError(
+        "REQUIRE_GPU=1 but torch.cuda.is_available() is false; "
+        "check the CUDA image, driver, and PyTorch build"
+    )
+
+gpu_packages = {}
+if require_gpu:
+    for module_name in ("sglang", "vllm", "flash_attn", "flashinfer"):
+        module = importlib.import_module(module_name)
+        gpu_packages[module_name] = getattr(module, "__version__", "unknown")
 
 print(json.dumps({
     "platform": platform.platform(),
@@ -44,6 +59,7 @@ print(json.dumps({
     "ray": ray.__version__,
     "tensordict": tensordict.__version__,
     "transformers": transformers.__version__,
+    "gpu_packages": gpu_packages,
 }, indent=2, sort_keys=True))
 PY
 

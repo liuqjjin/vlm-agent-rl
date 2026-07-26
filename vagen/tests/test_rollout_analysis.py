@@ -122,3 +122,53 @@ def test_result_row_keeps_missing_gpu_and_parity_metrics_null(tmp_path):
     assert row["Mean Turns"] == pytest.approx(3.0)
     assert row["Peak VRAM"] is None
     assert row["Ratio P95"] is None
+    assert row["Status"] == "incomplete-artifacts"
+
+
+def test_result_row_requires_expected_episode_count_and_provenance(tmp_path):
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "method": "base",
+                "environment": "sokoban",
+                "seed_start": 3,
+                "n_envs": 1,
+                "commit": "parent",
+                "verl_commit": "submodule",
+                "git_dirty": False,
+            }
+        )
+    )
+    (tmp_path / "eval_command.sh").write_text("true\n")
+    (tmp_path / "resolved_config.txt").write_text("resolved\n")
+    gpu_dir = tmp_path / "gpu_metrics"
+    gpu_dir.mkdir()
+    (gpu_dir / "gpu_summary.json").write_text(
+        json.dumps(
+            {
+                "return_code": 0,
+                "sample_count": 2,
+                "peak_vram_mib": 100.0,
+                "gpu_hours": 0.1,
+            }
+        )
+    )
+    _write_episode(
+        tmp_path,
+        "run3",
+        success=True,
+        turns=3,
+        reward=1.3,
+        valid=[True, True, True],
+    )
+
+    row = build_result_row(tmp_path)
+
+    assert row["Status"] == "complete"
+    assert row["Visual Success"] == pytest.approx(1.0)
+    assert row["Peak VRAM"] == pytest.approx(100.0)
+
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    manifest["git_dirty"] = True
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    assert build_result_row(tmp_path)["Status"] == "incomplete-artifacts"

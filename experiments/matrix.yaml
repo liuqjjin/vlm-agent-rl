@@ -34,12 +34,12 @@ environments:
     train: examples/train/sokoban/train_sokoban_vision.yaml
     validation: examples/train/sokoban/val_sokoban_vision.yaml
     evaluation: examples/evaluate/sokoban/config.yaml
-    evaluation_seeds: [10000, 10128]
+    evaluation_seeds: [10001, 10129]
   navigation:
     train: examples/train/navigation/train_navigation.yaml
     validation: examples/train/navigation/val_navigation.yaml
     evaluation: examples/evaluate/navigation/config_base.yaml
-    evaluation_seeds: [0, 60]
+    evaluation_seeds: [30, 60]
 
 funnel:
   smoke:

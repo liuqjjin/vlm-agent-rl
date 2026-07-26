@@ -100,3 +100,15 @@ The report is persisted before raising, including failed-gate evidence. Bypass m
 2. optional normalized `policy_weights` in the actor loss.
 
 Both changes have CPU tests in the submodule. No Ray, FSDP, inference engine, PPO scheduler, or GAE infrastructure was rewritten.
+
+## D13 — Fail closed at the experiment boundary
+
+**Decision:** formal training/evaluation refuses dirty source state, resolves
+the active config before launching expensive work, and records both commits,
+the replay command, resolved config, seeds, runtime controls, offline W&B
+location, and visible-device GPU samples.
+
+The episode-weighted method is restricted to one GPU. Its microbatch
+invariance is tested, but an equivalent cross-rank scaling proof has not yet
+been established. Phase-specific run names prevent screening and confirmatory
+artifacts from silently resuming into or overwriting one another.

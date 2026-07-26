@@ -29,6 +29,8 @@ MANIFEST
 *.log
 
 data/
+.cache/
+artifacts/
 exps/
 wandb/
 outputs/

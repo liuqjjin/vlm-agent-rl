@@ -338,6 +338,11 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate ViewSuite agents across multiple env specs.")
     parser.add_argument("--config", type=str, default=None, help="Path to evaluation YAML config.")
     parser.add_argument(
+        "--check-config",
+        action="store_true",
+        help="Resolve and validate the evaluation plan without contacting a backend or environment.",
+    )
+    parser.add_argument(
         "overrides",
         nargs="*",
         help="Optional OmegaConf dotlist overrides, e.g. run.backend=sglang run.max_concurrent_jobs=8",
@@ -437,8 +442,14 @@ def main() -> None:
     run_cfg = cfg.get("run") or {}
     backend = str(run_cfg.get("backend", "openai")).lower()
     resume_mode = str(run_cfg.get("resume", "skip_completed"))
+    if resume_mode not in {"off", "skip_completed", "force_rerun"}:
+        raise ValueError(
+            "run.resume must be one of: off, skip_completed, force_rerun"
+        )
     live_summary = bool(run_cfg.get("live_summary", False))
     max_concurrent = int(run_cfg.get("max_concurrent_jobs", 4))
+    if max_concurrent <= 0:
+        raise ValueError("run.max_concurrent_jobs must be positive")
     base_seed = int(run_cfg.get("base_seed", run_cfg.get("start_seed", 0)))
 
     backend_cfg: Dict[str, Any] = cfg.get("backends", {})[backend]
@@ -452,6 +463,9 @@ def main() -> None:
     print(f"Prepared {len(jobs)} jobs from {len(env_specs)} environment specs.")
 
     dump_dir = _resolve_dump_dir(cfg, base_dir)
+    if args.check_config:
+        print(f"Config check passed; dump_dir={dump_dir}")
+        return
     if resume_mode != "off":
         logger.info("Resume mode=%s; pruning error rollouts under %s", resume_mode, dump_dir)
         _purge_error_rollouts(dump_dir, resume_mode)

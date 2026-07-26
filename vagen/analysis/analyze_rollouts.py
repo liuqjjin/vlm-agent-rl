@@ -368,8 +368,19 @@ def _latest_jsonl(root: Path) -> Path | None:
 def build_result_row(root: Path) -> dict[str, Any]:
     manifest = _load_json(root / "manifest.json") or {}
     episodes = collect_evaluation_episodes(root)
-    evidence: list[str] = []
-    status = "not-run"
+    latest = None
+    evidence: list[str] = [
+        str(path)
+        for path in (
+            root / "manifest.json",
+            root / "train_command.sh",
+            root / "eval_command.sh",
+            root / "resolved_config.yaml",
+            root / "resolved_config.txt",
+        )
+        if path.exists()
+    ]
+    behavior_complete = False
     visual_success = None
     mean_turns = None
     if episodes:
@@ -377,7 +388,14 @@ def build_result_row(root: Path) -> dict[str, Any]:
         visual_success = evaluation["success_rate"]
         mean_turns = evaluation["mean_turns_successful"]
         evidence.extend(episode["metrics_path"] for episode in episodes[:1])
-        status = "complete"
+        expected_episodes = manifest.get("n_envs")
+        behavior_complete = (
+            isinstance(expected_episodes, int)
+            and expected_episodes > 0
+            and len(episodes) == expected_episodes
+            and len({episode["seed"] for episode in episodes})
+            == expected_episodes
+        )
     else:
         latest = _latest_jsonl(root)
         if latest:
@@ -385,7 +403,12 @@ def build_result_row(root: Path) -> dict[str, Any]:
             visual_success = training["success_rate"]
             mean_turns = training["mean_turns_successful"]
             evidence.append(str(latest))
-            status = "complete"
+            try:
+                behavior_complete = int(latest.stem) == int(
+                    manifest["total_steps"]
+                )
+            except (KeyError, TypeError, ValueError):
+                behavior_complete = False
 
     gpu = _load_json(root / "gpu_metrics" / "gpu_summary.json") or {}
     parity = _load_json(root / "parity.json") or {}
@@ -394,6 +417,55 @@ def build_result_row(root: Path) -> dict[str, Any]:
     if parity:
         evidence.append(str(root / "parity.json"))
     parity_metrics = parity.get("metrics") if isinstance(parity.get("metrics"), dict) else {}
+    gpu_complete = (
+        gpu.get("return_code") == 0
+        and int(gpu.get("sample_count", 0) or 0) > 0
+        and gpu.get("peak_vram_mib") is not None
+        and gpu.get("gpu_hours") is not None
+    )
+    is_training = "advantage_estimator" in manifest
+    parity_complete = (
+        not is_training
+        or (
+            parity.get("gate_enabled") is True
+            and parity.get("gate_passed") is True
+        )
+    )
+
+    def nonempty_file(path: Path) -> bool:
+        try:
+            return path.is_file() and path.stat().st_size > 0
+        except OSError:
+            return False
+
+    provenance_complete = bool(
+        manifest.get("commit")
+        and manifest.get("verl_commit")
+        and manifest.get("git_dirty") is False
+        and (
+            (
+                nonempty_file(root / "train_command.sh")
+                and nonempty_file(root / "resolved_config.yaml")
+            )
+            if is_training
+            else (
+                nonempty_file(root / "eval_command.sh")
+                and nonempty_file(root / "resolved_config.txt")
+            )
+        )
+    )
+    failed = (
+        (gpu and gpu.get("return_code") not in {None, 0})
+        or (is_training and parity.get("gate_passed") is False)
+    )
+    if failed:
+        status = "failed"
+    elif behavior_complete and gpu_complete and parity_complete and provenance_complete:
+        status = "complete"
+    elif episodes or latest or gpu or parity:
+        status = "incomplete-artifacts"
+    else:
+        status = "not-run"
 
     return {
         "Method": manifest.get("method", "unknown"),

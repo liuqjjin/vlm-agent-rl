@@ -4,15 +4,15 @@ defaults:
 # Before running eval, start the navigation server:
 #   python -m vagen.envs.navigation.serve --port 8000
 #
-# Each eval_set has 60 tasks. seed=[0,60,1] covers all tasks once.
+# Each eval_set has 30 held-out tasks. The seed range is inclusive.
 
 fileroot: ${oc.env:HOME}/projects/vagen
 
 envs:
   - name: RemoteEnv
-    n_envs: 60
+    n_envs: 30
     tag_id: navigation_base
-    seed: [0, 60, 1]
+    seed: [30, 59, 1]
     max_turns: 10
     config:
       base_urls: "http://localhost:8000"
@@ -27,9 +27,9 @@ envs:
       top_p: 1.0
 
   - name: RemoteEnv
-    n_envs: 60
+    n_envs: 30
     tag_id: navigation_common_sense
-    seed: [0, 60, 1]
+    seed: [30, 59, 1]
     max_turns: 10
     config:
       base_urls: "http://localhost:8000"
@@ -44,9 +44,9 @@ envs:
       top_p: 1.0
 
   - name: RemoteEnv
-    n_envs: 60
+    n_envs: 30
     tag_id: navigation_long_horizon
-    seed: [0, 60, 1]
+    seed: [30, 59, 1]
     max_turns: 10
     config:
       base_urls: "http://localhost:8000"

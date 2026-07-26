@@ -75,6 +75,7 @@ run_eval() {
   fi
   ENVIRONMENT="${environment}" \
   OBSERVATION_ABLATION="${ablation}" \
+  EVAL_METHOD="${EVAL_METHOD:-base}" \
   MODEL_PATH="${MODEL_PATH:-Qwen/Qwen2.5-VL-3B-Instruct}" \
     bash "${ROOT_DIR}/scripts/run_visual_eval.sh"
 }
@@ -93,10 +94,11 @@ case "${PHASE}" in
     export PYTHON_BIN
     export TOTAL_STEPS=5
     export TRAIN_BATCH_SIZE=2
-    export EXPERIMENT_DIR=/private/tmp/vlm-agent-rl-matrix-dry-run
+    DRY_RUN_ROOT="${DRY_RUN_ROOT:-/private/tmp/vlm-agent-rl-matrix-dry-run}"
     for environment in sokoban navigation; do
       for method in concat_grpo no_concat_gae no_concat_episode_grpo; do
-        run_training "${method}" "${environment}" 0
+        EXPERIMENT_DIR="${DRY_RUN_ROOT}/${environment}_${method}_seed0" \
+          run_training "${method}" "${environment}" 0
       done
       N_ENVS=2 run_eval "${environment}" none
     done
@@ -115,10 +117,15 @@ case "${PHASE}" in
     IFS=',' read -r -a methods <<< "${METHODS:-concat_grpo,no_concat_gae,no_concat_episode_grpo}"
     for environment in "${environments[@]}"; do
       for method in "${methods[@]}"; do
+        experiment_name="${environment}_core_screening_${method}_seed0"
+        if [[ "${method}" == "no_concat_episode_grpo" ]]; then
+          experiment_name="${environment}_core_screening_${method}_${REWARD_MODE:-outcome}_${LOSS_WEIGHTING:-trajectory}_seed0"
+        fi
         TOTAL_STEPS="${SCREENING_STEPS:-50}" \
         TRAIN_BATCH_SIZE="${SCREENING_BATCH_SIZE:-4}" \
         TEST_FREQ="${SCREENING_TEST_FREQ:-25}" \
         SAVE_FREQ=-1 \
+        EXPERIMENT_NAME="${experiment_name}" \
           run_training "${method}" "${environment}" 0
       done
     done
@@ -133,6 +140,7 @@ case "${PHASE}" in
         ROLLOUT_N="${SCREENING_ROLLOUT_N:-4}" \
         TEST_FREQ="${SCREENING_TEST_FREQ:-25}" \
         SAVE_FREQ=-1 \
+        EXPERIMENT_NAME="sokoban_episode_screening_no_concat_episode_grpo_${reward_mode}_${loss_weighting}_seed0" \
           run_training no_concat_episode_grpo sokoban 0
       done
     done
@@ -148,9 +156,14 @@ case "${PHASE}" in
           if [[ "${method}" == "no_concat_gae" ]]; then
             rollout_n=1
           fi
+          experiment_name="${environment}_confirmatory_${method}_seed${seed}"
+          if [[ "${method}" == "no_concat_episode_grpo" ]]; then
+            experiment_name="${environment}_confirmatory_${method}_${REWARD_MODE:-outcome}_${LOSS_WEIGHTING:-trajectory}_seed${seed}"
+          fi
           TOTAL_STEPS="${CONFIRMATORY_STEPS:-401}" \
           TRAIN_BATCH_SIZE="${CONFIRMATORY_BATCH_SIZE:-8}" \
           ROLLOUT_N="${rollout_n}" \
+          EXPERIMENT_NAME="${experiment_name}" \
             run_training "${method}" "${environment}" "${seed}"
         done
       done
@@ -164,7 +177,9 @@ case "${PHASE}" in
     IFS=',' read -r -a environments <<< "${ENVIRONMENTS:-sokoban,navigation}"
     for environment in "${environments[@]}"; do
       for ablation in none remove shuffle_tiles; do
-        MODEL_PATH="${EVAL_MODEL_PATH}" run_eval "${environment}" "${ablation}"
+        EVAL_METHOD="${EVAL_METHOD:-selected_checkpoint}" \
+        MODEL_PATH="${EVAL_MODEL_PATH}" \
+          run_eval "${environment}" "${ablation}"
       done
     done
     ;;

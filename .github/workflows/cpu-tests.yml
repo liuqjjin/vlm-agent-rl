@@ -33,11 +33,31 @@ jobs:
 
       - name: Check focused source
         run: |
+          bash -n \
+            scripts/run_training_method.sh \
+            scripts/run_visual_eval.sh \
+            scripts/run_experiment_matrix.sh \
+            scripts/run_smoke.sh \
+            scripts/autodl_bootstrap.sh \
+            scripts/check_environment.sh \
+            examples/evaluate/frozenlake/sglang/eval_qwen25_vl_3b.sh \
+            examples/evaluate/sokoban/sglang/eval_qwen25_vl_3b.sh \
+            examples/evaluate/navigation/sglang/eval_qwen25_vl_3b.sh
           ruff check \
+            scripts/run_with_gpu_metrics.py \
             vagen/analysis \
             vagen/custom_advantage/no_concat_episode_grpo.py \
+            vagen/evaluate/run_eval.py \
+            vagen/ray_trainer.py \
             vagen/utils/logprob_parity.py \
-            vagen/utils/state_anchor.py
+            vagen/utils/state_anchor.py \
+            vagen/tests/test_experiment_entrypoints.py \
+            vagen/tests/test_gpu_metrics.py \
+            vagen/tests/test_logprob_parity.py \
+            vagen/tests/test_no_concat_episode_grpo.py \
+            vagen/tests/test_no_concat_agent_loop.py \
+            vagen/tests/test_rollout_analysis.py \
+            vagen/tests/test_seed_partitions.py
 
       - name: Run CPU regressions
         run: |
@@ -45,9 +65,17 @@ jobs:
             vagen/tests/test_concat_val_multi_turn.py \
             vagen/tests/test_value_mask_regression.py \
             vagen/tests/test_no_concat_episode_grpo.py \
+            vagen/tests/test_no_concat_agent_loop.py \
             vagen/tests/test_logprob_parity.py \
             vagen/tests/test_multimodal_support.py \
             vagen/tests/test_state_relative_preflight.py \
             vagen/tests/test_sokoban_reward_bias.py \
+            vagen/tests/test_sokoban_seeding.py \
+            vagen/tests/test_seed_partitions.py \
+            vagen/tests/test_navigation_state_anchor.py \
+            vagen/tests/test_observation_ablation.py \
+            vagen/tests/test_gpu_metrics.py \
+            vagen/tests/test_rollout_analysis.py \
+            vagen/tests/test_experiment_entrypoints.py \
             verl/tests/trainer/ppo/test_sparse_value_supervision_on_cpu.py \
             verl/tests/trainer/ppo/test_policy_weights_on_cpu.py
