@@ -86,7 +86,9 @@ The experiment uses a stable retry-seed hash. Its raw outputs were also checked 
 
 ## CUDA quick start
 
-Use a Linux NVIDIA machine with at least 100 GiB free disk; an 80 GiB GPU is the conservative single-GPU choice for the critic-bearing comparison. On the machine:
+Use a Linux NVIDIA machine with at least 150 GiB free disk. Start with the
+cheapest available 48 GiB card; the fail-fast critic-bearing smoke determines
+whether an 80 GiB fallback is actually needed. On the machine:
 
 ```bash
 DOWNLOAD_MODEL=1 PRELOAD_NAVIGATION=1 bash scripts/autodl_bootstrap.sh

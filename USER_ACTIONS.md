@@ -6,9 +6,12 @@ Everything that can be completed on the current Mac has been completed. The rema
 
 1. Sign in to [AutoDL](https://www.autodl.com/), complete any required payment or identity verification, and open the live GPU rental page. Prices and stock change; use the live page rather than a number copied into this repository.
 2. Create one instance with:
-   - **preferred minimum:** one A800/A100-class 80 GiB GPU;
-   - **acceptable alternative after smoke:** a 96 GiB PRO 6000 or another CUDA-compatible 80+ GiB GPU;
+   - **lowest-cost first choice:** the cheapest available single CUDA GPU with
+     at least 48 GiB VRAM (for example A40, 4090-48G, or 3090-48G);
+   - **fallback only if the critic-bearing smoke OOMs:** one A800/A100-class
+     80 GiB GPU or a 96 GiB PRO 6000;
    - **image:** PyTorch 2.8.0, Python 3.12, CUDA 12.8;
+   - **host memory:** at least 96 GiB for the offloaded critic comparison;
    - **disk:** at least 150 GiB available and expandable;
    - public network and SSH enabled.
 3. Add your SSH public key in the AutoDL console. Do not send a private key or account password. The official instructions are [AutoDL SSH](https://api.autodl.com/docs/ssh/).
@@ -18,10 +21,16 @@ That is all the external interaction required. Login, payment, verification code
 
 ## Why this configuration
 
-- Qwen2.5-VL-3B episode GRPO uses LoRA and may fit smaller cards, but the fixed no-concat GAE comparison also holds a critic and is the memory-risk condition.
-- AI2-THOR Navigation runs a Unity renderer alongside model inference. An 80 GiB card gives useful headroom for the first trustworthy run.
+- Qwen2.5-VL-3B uses LoRA, 50% inference-engine allocation, and
+  parameter/optimizer offload; 48 GiB is the lowest credible first attempt.
+  The fixed no-concat GAE comparison also holds a critic and is the
+  memory-risk condition, so the smoke decides whether 80 GiB is necessary.
+- AI2-THOR Navigation runs a Unity renderer alongside model inference, which is
+  why 24 GiB cards are not the formal default even if episode-only inference
+  might start on one.
 - The bootstrap pins PyTorch 2.8/CUDA 12.8-compatible SGLang/vLLM dependencies, installs Vulkan/AI2-THOR, and keeps at least 100 GiB free.
-- If the screening run proves substantially smaller, later episode-only jobs can move to a cheaper card based on the measured peak VRAM. Do not choose that card in advance from an estimate.
+- Escalate from 48 GiB only on measured OOM/peak-VRAM evidence; do not pay for
+  80–96 GiB in advance from an estimate.
 
 AutoDL’s current supported base-image table is at [Base configurations](https://www.autodl.com/docs/base_config/), and instance creation/storage guidance is at [Quick start](https://www.autodl.com/docs/quick_start/).
 
