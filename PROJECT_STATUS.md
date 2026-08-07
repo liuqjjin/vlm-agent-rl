@@ -3,8 +3,8 @@
 > **这是仓库中唯一的当前状态事实源。** `docs/archive/status-reports/` 下的历史报告均已废弃，只用于保留审计过程，不得据此声称项目已完成。
 
 **状态日期：** 2026-08-08
-**当前阶段：** 本地非 GPU 验收已通过，等待顶层提交与 fresh-clone 交付复验
-**结论：** 单卡正式路径未发现已知非 GPU 阻塞；当前只剩把顶层 gitlink 与本轮改动提交、推送，并从远端 fresh clone 复验。该交付 gate 通过后，项目进入外部 CUDA 阶段。
+**当前阶段：** 非 GPU 验收与远端交付已完成，仅待外部 CUDA 实验
+**结论：** 单卡正式路径未发现已知非 GPU 阻塞。顶层实现 commit `6779b3d` 与 verl `6c705af7` 已推送，并通过远端 fresh-clone 复验；现在可以进入 GPU smoke。
 
 ## 1. 已完成且有静态/CPU 证据的部分
 
@@ -17,28 +17,28 @@
 
 “已有实现”不等于“完整交付已验收”。下面的命令结果决定当前能否进入 GPU。
 
-## 2. 最近一次本地验收快照
+## 2. 最终非 GPU 验收快照
 
-本快照来自当前工作树的实际命令。顶层提交后还会在 fresh clone 中重跑 smoke，并把交付结果写回本文件。
+下列结果来自 `git clone --recurse-submodules --branch main` 得到的干净远端副本，不依赖原工作目录的 editable install。
 
 | Gate | 命令 | 最近结果 | 状态 |
 |---|---|---:|---|
-| CPU smoke | `conda run -n vagen bash scripts/run_smoke.sh` | 顶层 gitlink 尚未提交，环境门禁按设计拒绝运行 | 待 fresh clone 复验 |
+| CPU smoke | `conda run -n vagen bash scripts/run_smoke.sh` | 126 passed；1 条依赖 warning；无 NVIDIA GPU，GPU smoke 按设计跳过 | 通过 |
 | 完整 CPU regression | `conda run -n vagen python -m pytest vagen/tests verl/tests/trainer/ppo -q` | 290 passed，0 failed；4 条上游/依赖 warning | 通过 |
 | CI focused Ruff | 使用 `.github/workflows/cpu-tests.yml` 的 `ruff check` 文件清单 | All checks passed | 通过 |
 | 配置与入口 | matrix contract + `DRY_RUN=1` 六组合 | 6 个分区有效；六组合解析成功 | 通过 |
-| verl 交付 | `git -C verl status --short --branch`；远端 SHA | 分支干净；`6c705af7` 已推送 | 子模块通过，待父仓 gitlink |
+| 远端交付 | fresh clone 顶层 / verl SHA | `6779b3d` / `6c705af7`；两级工作树干净 | 通过 |
 | GPU 实测 | 外部 Linux NVIDIA 实例 | 未运行 | 待执行 |
 
 上述测试数量只描述这个时间点，不写入最终简历。最终完成态应引用 fresh clone 上的最后一次验收记录，而不是历史数字。
 
-## 3. 当前待办
+## 3. 剩余工作
 
-### 进入 GPU 前必须完成
+剩余工作全部依赖外部 NVIDIA GPU：
 
-1. 提交并推送顶层仓库，使 gitlink 固定到已推送的 verl `6c705af7`。
-2. 从远端 `--recurse-submodules` fresh clone，确认顶层与子模块工作树干净。
-3. 在 fresh clone 中重跑 CPU smoke、配置契约与完整 regression，并保存最终 commit 和输出摘要。
+1. 在 AutoDL 上运行 GPU smoke，确认 vLLM + LoRA、SGLang 评测、Navigation renderer、parity 与峰值显存。
+2. Smoke 通过后按实验漏斗执行 base、screening、confirmatory、独立 final test 和视觉依赖评测。
+3. 用实测聚合结果替换 `results/main_results.csv`，并按替换清单生成可投递简历。
 
 Padding sentinel、Actor/Critic 实际 optimizer 路径、LoRA adapter 导出 fail-closed、独立 final-test、结果发布门控、GPU 清单和预算口径均已在本地实现并通过回归测试。
 
@@ -86,7 +86,7 @@ git status --short
 
 ## 6. GPU 阶段定义
 
-非 GPU gate 全部通过后，GPU 阶段按以下顺序进行：
+GPU 阶段按以下顺序进行：
 
 1. GPU smoke；
 2. 两环境 base evaluation；
@@ -108,7 +108,7 @@ git status --short
 | 正式实验与统计协议 | `EXPERIMENTS.md` |
 | GPU 保守预测与预算 | `PREDICTED_METRICS.md`、`results/main_results_predicted.csv` |
 | GPU 实测聚合 | `results/main_results.csv`（当前仍为空） |
-| CPU 原始证据 | `results/cpu/20260727-mac-arm64/` |
+| CPU 原始证据 | `results/cpu/20260808-mac-arm64/` |
 | 完成态简历模板 | `RESUME_PROJECT_CN.md` |
 | 历史审计报告 | `docs/archive/status-reports/`（SUPERSEDED） |
 
@@ -117,5 +117,5 @@ git status --short
 - 不手工把 `incomplete` 或 `pending` 文本替换为 `complete`。
 - 每次状态变化同时记录顶层 commit、verl commit、命令和实际输出。
 - GPU 预测永远保留并显式标记“保守预测”；实测结果写入独立文件。
-- 只有 fresh clone 的非 GPU gate 全绿，才可把当前阶段更新为“仅待 GPU”。
+- fresh clone 的非 GPU gate 已于 2026-08-08 全绿；若实现或依赖变化，必须重新执行。
 - 只有三训练 seed GPU 结果、final test、视觉消融和证据链全部完成，才可启用 `RESUME_PROJECT_CN.md` 的完成态数字。

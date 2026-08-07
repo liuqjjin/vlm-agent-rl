@@ -1,0 +1,51 @@
+{
+  "metadata": {
+    "cuda_available": false,
+    "generated_at_utc": "2026-08-07T16:28:16.828144+00:00",
+    "git_branch": "exp/no-concat-grpo",
+    "git_commit": "6779b3dfb6a1f81e3153bb9c6475807ec96a9fd0",
+    "git_dirty": false,
+    "machine": "arm64",
+    "numpy": "1.26.4",
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "python": "3.12.13",
+    "seed": 20260727,
+    "torch": "2.8.0"
+  },
+  "policy_weighting": {
+    "token": {
+      "0": 0.714285746216774,
+      "1": 0.2857142984867096
+    },
+    "trajectory": {
+      "0": 0.5000000074505806,
+      "1": 0.5
+    },
+    "turn": {
+      "0": 0.6666666865348816,
+      "1": 0.3333333432674408
+    }
+  },
+  "scope": "CPU correctness evidence only. Visual success, VRAM, GPU-hours, rollout/train ratio, and base-policy state-relative preflight require CUDA.",
+  "sokoban_reward_bias": {
+    "all_solved": true,
+    "max_environment_reward_delta": 0.2999999999999998,
+    "mean_environment_reward_delta": 0.24499999999999994,
+    "mean_score_delta_by_mode": {
+      "bounded_process": 0.0,
+      "format_gate": 0.0,
+      "outcome": 0.0
+    },
+    "min_environment_reward_delta": 0.19999999999999996,
+    "positive_delta_fraction": 1.0,
+    "seed_count": 20,
+    "seed_start": 0
+  },
+  "value_mask": {
+    "legacy_ignored_final": -87.78154754638672,
+    "masked_ignored_final": 0.5,
+    "masked_ignored_initial": 0.5,
+    "masked_supervised_final": 1.9654123783111572,
+    "steps": 20
+  }
+}

@@ -86,7 +86,7 @@ git -C verl diff --stat \
 
 The reproducible CPU correctness environment is fully enumerated in
 [`requirements/cpu-test.txt`](requirements/cpu-test.txt). The run committed
-under `results/cpu/20260727-mac-arm64` used:
+under `results/cpu/20260808-mac-arm64` used:
 
 ```text
 Python 3.12.13

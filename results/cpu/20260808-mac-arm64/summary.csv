@@ -1,0 +1,5 @@
+metric,value,unit,evidence
+masked ignored value after 20 updates,0.5,value,raw/value_mask_steps.csv
+legacy ignored value after 20 updates,-87.78154754638672,value,raw/value_mask_steps.csv
+mean extra reward from split turns,0.24499999999999994,reward,raw/sokoban_reward_pairs.csv
+seeds with positive split-turn bias,1.0,fraction,raw/sokoban_reward_pairs.csv

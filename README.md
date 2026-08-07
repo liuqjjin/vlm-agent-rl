@@ -13,7 +13,7 @@
 | 任务 | 视觉 Sokoban；部分可观测 Navigation |
 | 核心对照 | concat GRPO；修复后的 no-concat GAE；no-concat episode GRPO |
 | 主要指标 | held-out 成功率、成功 episode 平均回合数、rollout/train 概率一致性、峰值显存、GPU·h |
-| 当前阶段 | CPU 证据已提交；非 GPU 验收仍在收尾；GPU 结果待运行 |
+| 当前阶段 | 非 GPU 验收与 fresh-clone 交付已通过；GPU 结果待运行 |
 
 ## 研究问题与核心贡献
 
@@ -88,12 +88,12 @@ flowchart LR
 
 | 检查 | 观测结果 | 原始证据 |
 |---|---:|---|
-| 20 步后被忽略的 critic value | 修复后 `0.500`；legacy `-87.782` | [value_mask_steps.csv](results/cpu/20260727-mac-arm64/raw/value_mask_steps.csv) |
-| 20 步后受监督 critic value | `1.965`，目标 `2.0` | [summary.json](results/cpu/20260727-mac-arm64/summary.json) |
-| 相同最短路径被拆成更多回合后的原始奖励增量 | 均值 `+0.245`；20/20 seeds 为正 | [sokoban_reward_pairs.csv](results/cpu/20260727-mac-arm64/raw/sokoban_reward_pairs.csv) |
-| outcome / bounded-process / format-gate 下的长度增量 | 受控集合中均值均为 `0.000` | [summary.json](results/cpu/20260727-mac-arm64/summary.json) |
+| 20 步后被忽略的 critic value | 修复后 `0.500`；legacy `-87.782` | [value_mask_steps.csv](results/cpu/20260808-mac-arm64/raw/value_mask_steps.csv) |
+| 20 步后受监督 critic value | `1.965`，目标 `2.0` | [summary.json](results/cpu/20260808-mac-arm64/summary.json) |
+| 相同最短路径被拆成更多回合后的原始奖励增量 | 均值 `+0.245`；20/20 seeds 为正 | [sokoban_reward_pairs.csv](results/cpu/20260808-mac-arm64/raw/sokoban_reward_pairs.csv) |
+| outcome / bounded-process / format-gate 下的长度增量 | 受控集合中均值均为 `0.000` | [summary.json](results/cpu/20260808-mac-arm64/summary.json) |
 
-![CPU 诊断图](results/cpu/20260727-mac-arm64/cpu_diagnostics.svg)
+![CPU 诊断图](results/cpu/20260808-mac-arm64/cpu_diagnostics.svg)
 
 完整 CPU 回归是否满足 GPU 前置门槛，不在 README 中写死易漂移的测试数量；请查看 [PROJECT_STATUS.md](PROJECT_STATUS.md) 中的最新命令与验收记录。
 
@@ -148,7 +148,7 @@ conda run -n vagen python -m vagen.analysis.run_cpu_experiments \
 
 ### GPU 漏斗
 
-只有 [PROJECT_STATUS.md](PROJECT_STATUS.md) 的非 GPU 验收全部通过后，才进入外部 GPU 阶段：
+[PROJECT_STATUS.md](PROJECT_STATUS.md) 的非 GPU 验收已经通过，外部 GPU 阶段按以下漏斗执行：
 
 ```bash
 DOWNLOAD_MODEL=1 PRELOAD_NAVIGATION=1 bash scripts/autodl_bootstrap.sh
