@@ -100,6 +100,16 @@ def test_training_analysis_deduplicates_padding_and_measures_group_variance():
     assert report["mean_group_reward_variance"] == pytest.approx(0.25)
 
 
+def test_training_analysis_prefers_validation_trajectory_num_turns():
+    report = analyze_training_rows(
+        [
+            {"score": 1.0, "traj_success": True, "num_turns": 4},
+            {"score": 1.0, "traj_success": True, "__num_turns__": 6},
+        ]
+    )
+    assert report["mean_turns_successful"] == pytest.approx(5.0)
+
+
 def test_result_row_keeps_missing_gpu_and_parity_metrics_null(tmp_path):
     (tmp_path / "manifest.json").write_text(
         json.dumps(

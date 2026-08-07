@@ -71,8 +71,11 @@ def _make_output(rows):
         responses.append(_right_pad(r["resp"]))
         masks.append(_right_pad([1] * len(r["resp"])))
         rms.append(_right_pad([1.0] * len(r["resp"]), pad=0.0))
-        groups.append(r["group"]); trajs.append(r["traj"]); turns.append(r["turn"])
-        imgs.append(r["img"]); reis.append(r["rei"])
+        groups.append(r["group"])
+        trajs.append(r["traj"])
+        turns.append(r["turn"])
+        imgs.append(r["img"])
+        reis.append(r["rei"])
     batch = TensorDict(
         {
             "prompts": torch.tensor(prompts, dtype=torch.long),
@@ -103,14 +106,14 @@ def _gen_batch(uids):
 # -------------------- decode identical to _validate --------------------
 def _decode_real_response(resp_row):
     """Mirror ray_trainer._validate: outputs -> s[:l], l = #non-pad tokens."""
-    l = int((resp_row != PAD).sum().item())
-    return resp_row[:l]
+    real_length = int((resp_row != PAD).sum().item())
+    return resp_row[:real_length]
 
 
 def _decode_real_prompt(prompt_row):
     """Mirror _validate inputs -> s[-l:], l = #non-pad tokens (left-padded)."""
-    l = int((prompt_row != PAD).sum().item())
-    return prompt_row[-l:] if l else prompt_row[:0]
+    real_length = int((prompt_row != PAD).sum().item())
+    return prompt_row[-real_length:] if real_length else prompt_row[:0]
 
 
 def _count_turn_markers(t):
@@ -209,8 +212,10 @@ def test_multi_trajectory_batch_mixed_lengths():
     # final batch padding must be trailing-only for every row
     for i in range(len(out)):
         resp = out.batch["responses"][i]
-        l = int((resp != PAD).sum().item())
-        assert bool((resp[:l] != PAD).all()) and bool((resp[l:] == PAD).all())
+        real_length = int((resp != PAD).sum().item())
+        assert bool((resp[:real_length] != PAD).all()) and bool(
+            (resp[real_length:] == PAD).all()
+        )
 
 
 def test_reorder_follows_gen_uid():

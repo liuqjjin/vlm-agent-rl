@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import MethodType
 
 import numpy as np
 import pytest
 import torch
+from omegaconf import OmegaConf
 from tensordict import TensorDict
 
 from verl import DataProto
@@ -138,3 +140,41 @@ def test_sparse_value_supervision_remains_masked_for_twenty_updates():
 
     assert predictions.detach()[0, 0].item() == pytest.approx(ignored_initial)
     assert predictions.detach()[0, 1].item() == pytest.approx(2.0, abs=0.04)
+
+
+def test_value_mask_drives_real_critic_optimizer_update() -> None:
+    from verl.workers.critic.dp_critic import DataParallelPPOCritic
+
+    class _TwoTokenCritic(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.predictions = torch.nn.Parameter(torch.tensor([0.5, -1.0]))
+
+    config = OmegaConf.create(
+        {
+            "model": {"use_remove_padding": False},
+            "ulysses_sequence_parallel_size": 1,
+            "ppo_mini_batch_size": 1,
+            "ppo_micro_batch_size_per_gpu": 1,
+            "ppo_epochs": 1,
+            "use_dynamic_bsz": False,
+            "cliprange_value": 1000.0,
+            "loss_agg_mode": "token-mean",
+            "grad_clip": 100.0,
+        }
+    )
+    module = _TwoTokenCritic()
+    optimizer = torch.optim.SGD(module.parameters(), lr=0.2)
+    critic = DataParallelPPOCritic(config, module, optimizer)
+
+    def _forward(self, model_inputs):
+        batch_size = model_inputs["responses"].shape[0]
+        return self.critic_module.predictions.unsqueeze(0).expand(batch_size, -1)
+
+    critic._forward_micro_batch = MethodType(_forward, critic)
+    before = module.predictions.detach().clone()
+    metrics = critic.update_critic(_sparse_critic_batch())
+
+    assert module.predictions.detach()[0].item() == pytest.approx(before[0].item())
+    assert module.predictions.detach()[1].item() != pytest.approx(before[1].item())
+    assert "critic/vf_loss" in metrics

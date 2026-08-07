@@ -183,6 +183,7 @@ def concat_val_multi_turn(
         non_tensor_entry: Dict[str, Any] = {
             "group_idx": group_idx_str,
             "traj_idx": int(traj_idx),
+            "__num_turns__": len(turns),
             "image_data": merged_images,
             "reward_extra_info": reward_extra_info,
         }

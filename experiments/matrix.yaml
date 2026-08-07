@@ -32,14 +32,18 @@ methods:
 environments:
   sokoban:
     train: examples/train/sokoban/train_sokoban_vision.yaml
+    train_seeds: [1, 10000]  # Training: 10000 unique seeds
     validation: examples/train/sokoban/val_sokoban_vision.yaml
+    validation_seeds: [10001, 10128]  # Validation for checkpoint selection: 128 seeds
     evaluation: examples/evaluate/sokoban/config.yaml
-    evaluation_seeds: [10001, 10129]
+    evaluation_seeds: [10129, 10256]  # Final test (post-training): 128 seeds, disjoint from train+val
   navigation:
     train: examples/train/navigation/train_navigation.yaml
+    train_seeds: [0, 1199]  # Training: base_train dataset (1200 tasks)
     validation: examples/train/navigation/val_navigation.yaml
+    validation_seeds: [0, 29]  # Validation: base tasks 0-29 (held-out)
     evaluation: examples/evaluate/navigation/config_base.yaml
-    evaluation_seeds: [30, 60]
+    evaluation_seeds: [30, 59]  # Final test: base tasks 30-59, disjoint from train and val
 
 funnel:
   smoke:

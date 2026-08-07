@@ -32,6 +32,7 @@ async def test_no_concat_loop_terminates_on_success_without_done() -> None:
         cur_anchor="anchor",
         group_idx=0,
         traj_idx=0,
+        is_padding=True,
     )
     data.last_assistant_text = "move"
     data.turn_prompt_ids = [10, 20]
@@ -43,4 +44,5 @@ async def test_no_concat_loop_terminates_on_success_without_done() -> None:
     assert state is AgentState.TERMINATED
     assert len(data.outputs) == 1
     assert data.outputs[0].extra_fields["last_turn"] is True
+    assert data.outputs[0].extra_fields["_is_padding"] is True
     assert data.outputs[0].extra_fields["reward_extra_info"]["traj_success"] == 1.0

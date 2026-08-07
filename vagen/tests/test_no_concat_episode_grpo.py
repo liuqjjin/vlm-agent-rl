@@ -314,3 +314,100 @@ def test_policy_weighted_objective_is_microbatch_partition_invariant():
         accumulated += local_token_mean * loss_scale_factor
 
     assert accumulated.item() == pytest.approx(expected.item())
+
+
+def test_num_repeat_validation():
+    """num_repeat must be at least 2 for group statistics."""
+    compute, _, _ = _implementation()
+    rows = [_row("g", 0, 1, 0.0, success=False)]
+    with pytest.raises(ValueError, match="requires rollout.n >= 2"):
+        compute(
+            data=_data(rows),
+            gamma=1.0,
+            lam=1.0,
+            num_repeat=1,
+            norm_adv_by_std_in_grpo=True,
+            config=_config(),
+        )
+
+
+def test_missing_reward_field_is_rejected():
+    """Batch must contain token_level_rewards or token_level_scores."""
+    compute, _, _ = _implementation()
+    data = _data([_row("g", 0, 1, 0.0), _row("g", 1, 1, 1.1, success=True)])
+    data.batch.pop("token_level_rewards")
+    with pytest.raises(KeyError, match="token_level_rewards or token_level_scores"):
+        compute(
+            data=data,
+            gamma=1.0,
+            lam=1.0,
+            num_repeat=2,
+            norm_adv_by_std_in_grpo=True,
+            config=_config(),
+        )
+
+
+def test_reward_mask_shape_mismatch_is_rejected():
+    """Rewards and response_mask must have matching shapes."""
+    compute, _, _ = _implementation()
+    data = _data([_row("g", 0, 1, 0.0), _row("g", 1, 1, 1.1, success=True)])
+    data.batch["response_mask"] = torch.ones(2, 5)  # Wrong width
+    with pytest.raises(ValueError, match="shape mismatch"):
+        compute(
+            data=data,
+            gamma=1.0,
+            lam=1.0,
+            num_repeat=2,
+            norm_adv_by_std_in_grpo=True,
+            config=_config(),
+        )
+
+
+def test_metadata_includes_mode_configuration():
+    """Metadata should report the configured reward and loss weighting modes."""
+    compute, _, _ = _implementation()
+    data = _data([
+        _row("g", 0, 1, 0.0, success=False),
+        _row("g", 1, 1, 1.1, success=True),
+    ])
+    compute(
+        data=data,
+        gamma=1.0,
+        lam=1.0,
+        num_repeat=2,
+        norm_adv_by_std_in_grpo=True,
+        config=_config(reward_mode="bounded_process", loss_weighting="turn"),
+    )
+    meta = data.meta_info["no_concat_episode_grpo"]
+    assert meta["reward_mode"] == "bounded_process"
+    assert meta["loss_weighting"] == "turn"
+
+
+def test_advantages_are_finite_and_non_nan():
+    """All computed advantages should be finite (no NaN or Inf)."""
+    rows = [
+        _row("g", 0, 1, 0.0, success=False),
+        _row("g", 1, 1, 1.1, success=True),
+    ]
+    advantages = _advantages(rows)
+    assert torch.isfinite(advantages).all()
+
+
+def test_policy_weights_are_finite_and_non_negative():
+    """All computed policy weights should be finite and non-negative."""
+    compute, _, _ = _implementation()
+    data = _data([
+        _row("g", 0, 1, 0.0, success=False),
+        _row("g", 1, 1, 1.1, success=True),
+    ])
+    compute(
+        data=data,
+        gamma=1.0,
+        lam=1.0,
+        num_repeat=2,
+        norm_adv_by_std_in_grpo=True,
+        config=_config(),
+    )
+    weights = data.batch["policy_weights"]
+    assert torch.isfinite(weights).all()
+    assert (weights >= 0).all()

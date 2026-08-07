@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_NAME="${VAGEN_GPU_ENV:-vagen-gpu}"
-MIN_FREE_GB="${MIN_FREE_GB:-100}"
+ENV_NAME="${VAGEN_GPU_ENV:-vagen}"
+MIN_FREE_GB="${MIN_FREE_GB:-600}"
 
 if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "[ERROR] No NVIDIA GPU is visible. Start the AutoDL instance with a GPU first." >&2
@@ -43,8 +43,11 @@ export WANDB_MODE="${WANDB_MODE:-offline}"
 mkdir -p "${HF_HOME}" "${ROOT_DIR}/artifacts/environment"
 
 pushd "${ROOT_DIR}/verl" >/dev/null
+# Install verl and dependencies
 USE_MEGATRON=0 USE_SGLANG=1 bash scripts/install_vllm_sglang_mcore.sh
 python -m pip install --no-deps --editable .
+# Clean up any downloaded wheel files from install script to keep submodule clean
+find . -maxdepth 1 -name "*.whl" -type f -delete
 popd >/dev/null
 
 python -m pip install --requirement "${ROOT_DIR}/requirements/cpu-test.txt"
@@ -63,6 +66,7 @@ python -m pip check
 
 python -m pip freeze > "${ROOT_DIR}/artifacts/environment/gpu-pip-freeze.txt"
 nvidia-smi -q > "${ROOT_DIR}/artifacts/environment/nvidia-smi.txt"
+
 PYTHON_BIN=python REQUIRE_GPU=1 bash "${ROOT_DIR}/scripts/check_environment.sh"
 
 PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" python -m pytest -q \

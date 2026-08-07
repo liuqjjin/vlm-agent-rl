@@ -87,6 +87,45 @@ def _correlation_and_slope(
 
 
 def collect_evaluation_episodes(root: Path) -> list[dict[str, Any]]:
+    """Collect episode metrics and assistant texts from evaluation artifacts.
+
+    Recursively scans for metrics.json files and extracts episode-level statistics,
+    combining metrics with assistant response texts for downstream analysis.
+
+    Args:
+        root: Directory containing evaluation outputs with metrics.json files.
+
+    Returns:
+        List of episode dictionaries with success, turns, rewards, and transcripts.
+            Each dictionary contains:
+            - rollout_id: Episode identifier
+            - seed: Random seed for reproducibility
+            - success: Boolean task completion flag
+            - num_turns: Number of environment interactions
+            - cumulative_reward: Total reward across all turns
+            - finish_reason: Termination cause (done, max_turns, error, etc.)
+            - environment: Environment name
+            - tag_id: Optional experiment tag
+            - observation_ablation: Visual ablation mode (none, remove_images, etc.)
+            - assistant_texts: List of model responses
+            - valid_action_count: Number of valid actions
+            - action_check_count: Total action validation attempts
+            - metrics_path: Path to source metrics.json
+            - transcript_path: Path to episode transcript
+
+    Example:
+        >>> episodes = collect_evaluation_episodes(Path("outputs/eval_run_001"))
+        >>> len(episodes)
+        100
+        >>> episodes[0]["success"]
+        True
+        >>> episodes[0]["num_turns"]
+        5
+
+    Note:
+        Malformed or unreadable metrics.json files are silently skipped to enable
+        partial analysis of incomplete evaluation runs.
+    """
     episodes: list[dict[str, Any]] = []
     for metrics_path in sorted(root.rglob("metrics.json")):
         metrics = _load_json(metrics_path)
@@ -108,7 +147,7 @@ def collect_evaluation_episodes(root: Path) -> list[dict[str, Any]]:
                 "rollout_id": metrics.get("rollout_id", metrics_path.parent.name),
                 "seed": metrics.get("seed"),
                 "success": bool(metrics.get("success", False)),
-                "num_turns": int(metrics.get("num_turns", len(assistant_texts)) or 0),
+                "num_turns": int(metrics.get("num_turns", 0) or 0),
                 "cumulative_reward": float(metrics.get("cumulative_reward", 0.0) or 0.0),
                 "finish_reason": metrics.get("finish_reason"),
                 "environment": metrics.get("env_name"),
@@ -127,6 +166,48 @@ def collect_evaluation_episodes(root: Path) -> list[dict[str, Any]]:
 def analyze_evaluation_episodes(
     episodes: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """Compute success rate, template concentration, and visual ablation deltas.
+
+    Analyzes evaluation episodes to detect policy quality, response diversity,
+    and the impact of visual observations on task performance.
+
+    Args:
+        episodes: Episode dictionaries from collect_evaluation_episodes.
+
+    Returns:
+        Summary dictionary with success metrics and quality diagnostics:
+            - episodes: Total episode count
+            - success_rate: Fraction of episodes completing the task
+            - mean_turns: Average turns across all episodes
+            - mean_turns_successful: Average turns for successful episodes only
+            - mean_cumulative_reward: Average total reward
+            - invalid_action_fraction: Fraction of actions failing validation
+            - action_checks: Total action validation attempts
+            - answer_template_concentration: Max frequency of most common answer template
+            - unique_answer_fraction: Ratio of unique answer templates to total responses
+            - response_template_concentration: Max frequency of most common response template
+            - unique_response_fraction: Ratio of unique response templates to total responses
+            - reward_turn_correlation: Correlation between turns and cumulative reward
+            - reward_per_extra_turn_slope: Linear slope of reward vs turns
+            - by_observation_ablation: Per-ablation success rates and turn statistics
+
+    Example:
+        >>> episodes = collect_evaluation_episodes(Path("outputs/eval"))
+        >>> analysis = analyze_evaluation_episodes(episodes)
+        >>> analysis["success_rate"]
+        0.73
+        >>> analysis["answer_template_concentration"]
+        0.15  # Low concentration indicates diverse responses
+        >>> analysis["by_observation_ablation"]["none"]["success_rate"]
+        0.73
+        >>> analysis["by_observation_ablation"]["remove_images"]["success_rate"]
+        0.12  # Large drop indicates vision is critical
+
+    Note:
+        Template concentration above 0.5 suggests mode collapse (model repeating
+        similar responses). Unique fraction below 0.3 indicates limited diversity.
+        Negative reward_per_extra_turn_slope suggests efficiency issues.
+    """
     count = len(episodes)
     successes = [episode for episode in episodes if episode["success"]]
     responses = [
@@ -205,6 +286,41 @@ def analyze_evaluation_episodes(
 def representative_failures(
     episodes: list[dict[str, Any]], limit: int = 10
 ) -> list[dict[str, Any]]:
+    """Extract representative failed episodes for manual review.
+
+    Prioritizes non-error failures (clean task failures rather than crashes) and
+    selects diverse failure modes by sorting on validity, turns, and reward.
+
+    Args:
+        episodes: Episode dictionaries from collect_evaluation_episodes.
+        limit: Maximum number of failures to return (default: 10).
+
+    Returns:
+        Failed episodes sorted by validity (non-error finishes first), then turns and reward.
+            Each dictionary contains:
+            - rollout_id: Episode identifier
+            - seed: Random seed
+            - finish_reason: Termination cause
+            - num_turns: Number of turns
+            - cumulative_reward: Total reward
+            - valid_action_count: Valid actions
+            - action_check_count: Total action checks
+            - observation_ablation: Ablation mode
+            - transcript_path: Path to episode transcript
+            - metrics_path: Path to metrics.json
+
+    Example:
+        >>> episodes = collect_evaluation_episodes(Path("outputs/eval"))
+        >>> failures = representative_failures(episodes, limit=5)
+        >>> for failure in failures:
+        ...     print(f"{failure['rollout_id']}: {failure['finish_reason']}, "
+        ...           f"{failure['num_turns']} turns, reward {failure['cumulative_reward']}")
+
+    Note:
+        Prioritizing non-error failures ensures that manual review focuses on semantic
+        task failures (wrong actions, incorrect reasoning) rather than implementation
+        bugs (environment crashes, model errors).
+    """
     failures = [episode for episode in episodes if not episode["success"]]
     failures.sort(
         key=lambda episode: (
@@ -234,6 +350,42 @@ def representative_failures(
 
 
 def load_training_rows(paths: Iterable[Path]) -> list[dict[str, Any]]:
+    """Load raw training rollout rows from JSONL files.
+
+    Parses JSONL rollout dumps, skipping empty lines and validating JSON syntax.
+
+    Args:
+        paths: Paths to rollout JSONL files.
+
+    Returns:
+        List of row dictionaries with group_idx, traj_idx, turn_idx, and rollout data.
+            Each row represents one environment turn with fields:
+            - group_idx: Group identifier for GRPO
+            - traj_idx: Trajectory index within group
+            - turn_idx: Turn index within trajectory
+            - score: Per-turn reward
+            - output: Model response text
+            - last_turn: Boolean terminal turn marker
+            - traj_success: Boolean trajectory success flag
+            - action_is_valid: Boolean action validation result
+
+    Raises:
+        ValueError: If any line contains invalid JSON, with file path and line number.
+
+    Example:
+        >>> paths = [Path("rollouts/1000.jsonl"), Path("rollouts/2000.jsonl")]
+        >>> rows = load_training_rows(paths)
+        >>> len(rows)
+        512
+        >>> rows[0]["group_idx"]
+        'uuid-abc123'
+        >>> rows[0]["turn_idx"]
+        1
+
+    Note:
+        Non-dictionary JSON values are silently skipped to handle mixed-format logs.
+        Empty lines are ignored.
+    """
     rows: list[dict[str, Any]] = []
     for path in paths:
         with path.open() as handle:
@@ -249,7 +401,84 @@ def load_training_rows(paths: Iterable[Path]) -> list[dict[str, Any]]:
     return rows
 
 
+def _trajectory_turn_count(trajectory_rows: list[dict[str, Any]]) -> int:
+    """Prefer a trajectory-level turn count while preserving old per-turn dumps.
+
+    Current no-concat validation writes ``num_turns`` at the top level.  Older
+    artifacts may contain ``__num_turns__`` or the same value inside
+    ``reward_extra_info``.  A grouped per-turn rollout is allowed to carry a
+    per-row value of one; in that case the row count remains authoritative.
+    """
+    explicit: list[int] = []
+    for row in trajectory_rows:
+        values = [row.get("num_turns"), row.get("__num_turns__")]
+        reward_extra = row.get("reward_extra_info")
+        if isinstance(reward_extra, dict):
+            values.extend(
+                [reward_extra.get("num_turns"), reward_extra.get("__num_turns__")]
+            )
+        for value in values:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                integer = int(value)
+                if integer > 0 and float(value) == integer:
+                    explicit.append(integer)
+                    break
+    if not explicit:
+        return len(trajectory_rows)
+    if len(set(explicit)) > 1:
+        raise ValueError(f"conflicting trajectory num_turns values: {explicit}")
+    candidate = explicit[0]
+    if len(trajectory_rows) == 1 or candidate >= len(trajectory_rows):
+        return candidate
+    return len(trajectory_rows)
+
+
 def analyze_training_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute group reward variance and trajectory statistics from rollout rows.
+
+    Validates trajectory structure, deduplicates padding artifacts, and computes
+    GRPO-relevant statistics including within-group reward variance.
+
+    Args:
+        rows: Rollout rows from load_training_rows.
+
+    Returns:
+        Summary with trajectory count, group variance, and zero-variance fraction:
+            - rows: Total row count (including padding duplicates)
+            - unique_rows: Deduplicated row count
+            - padding_duplicates: Number of duplicate rows removed
+            - trajectories: Total trajectory count
+            - groups: Number of unique groups
+            - success_rate: Fraction of successful trajectories
+            - mean_turns_successful: Average turns for successful trajectories
+            - mean_group_reward_variance: Average variance of rewards within groups
+            - zero_variance_group_fraction: Fraction of groups with zero reward variance
+            - answer_template_concentration: Max frequency of most common answer template
+            - unique_answer_fraction: Ratio of unique answer templates to total outputs
+            - invalid_action_fraction: Fraction of invalid actions
+            - reward_turn_correlation: Correlation between turns and reward
+            - reward_per_extra_turn_slope: Linear slope of reward vs turns
+            - trajectory_records: List of per-trajectory statistics for export
+
+    Raises:
+        ValueError: If duplicate rows have conflicting data for the same (group, traj, turn).
+
+    Example:
+        >>> rows = load_training_rows([Path("rollouts/1000.jsonl")])
+        >>> analysis = analyze_training_rows(rows)
+        >>> analysis["mean_group_reward_variance"]
+        0.15  # Higher variance enables better GRPO signal
+        >>> analysis["zero_variance_group_fraction"]
+        0.05  # Low is good - groups have diverse outcomes
+        >>> analysis["padding_duplicates"]
+        32  # Expected with distributed data parallelism
+
+    Note:
+        - High zero_variance_group_fraction (>0.3) indicates mode collapse or
+          insufficient exploration within groups.
+        - Padding duplicates are validated for consistency but excluded from statistics.
+        - Rows missing (group_idx, traj_idx, turn_idx) are treated as ungrouped trajectories.
+    """
     unique: dict[tuple[str, int, int], dict[str, Any]] = {}
     ungrouped: list[dict[str, Any]] = []
     duplicate_count = 0
@@ -285,7 +514,7 @@ def analyze_training_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "group": group,
                 "trajectory": trajectory,
                 "reward": sum(float(row.get("score", 0.0)) for row in trajectory_rows),
-                "turns": len(trajectory_rows),
+                "turns": _trajectory_turn_count(trajectory_rows),
                 "success": any(
                     bool(row.get("traj_success", False))
                     for row in trajectory_rows
@@ -369,6 +598,56 @@ def _latest_jsonl(root: Path) -> Path | None:
 
 
 def build_result_row(root: Path) -> dict[str, Any]:
+    """Build a result table row from training or evaluation artifacts.
+
+    Aggregates metrics from multiple sources (manifest, episodes, GPU samples, parity checks)
+    to produce a single row for the main results table with completeness validation.
+
+    Args:
+        root: Run directory containing manifest, metrics, and GPU samples.
+            Expected structure:
+            - manifest.json: Run configuration and provenance
+            - metrics.json files: Evaluation episode results (recursive search)
+            - rollouts/*.jsonl or validation/*.jsonl: Training rollouts
+            - gpu_metrics/gpu_summary.json: Resource usage
+            - parity.json: Rollout/train log-probability checks
+            - train_command.sh / eval_command.sh: Reproducibility artifacts
+            - resolved_config.yaml / resolved_config.txt: Full configuration
+
+    Returns:
+        Result row dictionary with completeness status and evidence paths:
+            - Method: Experiment method name from manifest
+            - Visual Success: Success rate (evaluation or latest training rollout)
+            - Peak VRAM: Peak GPU memory usage in MiB
+            - GPU·h: Total GPU-hours consumed
+            - Mean Turns: Average turns for successful episodes/trajectories
+            - Ratio P95: 95th percentile rollout/train log-prob ratio
+            - Status: "complete", "incomplete-artifacts", "failed", or "not-run"
+            - Environment: Environment name
+            - Seed: Random seed or seed range start
+            - Commit: Git commit hash
+            - Evidence: Semicolon-separated list of source file paths
+
+    Example:
+        >>> row = build_result_row(Path("outputs/grpo_run_001"))
+        >>> row["Status"]
+        'complete'
+        >>> row["Visual Success"]
+        0.73
+        >>> row["Peak VRAM"]
+        45120
+        >>> row["GPU·h"]
+        12.5
+
+    Note:
+        Status determination:
+        - "failed": GPU exit code != 0, evaluation errors, or parity gate failures
+        - "complete": All artifacts present, counts match expectations, parity passed
+        - "incomplete-artifacts": Some artifacts exist but validation incomplete
+        - "not-run": No artifacts found
+
+        Provenance completeness requires clean git state and preserved command/config files.
+    """
     manifest = _load_json(root / "manifest.json") or {}
     episodes = collect_evaluation_episodes(root)
     latest = None
@@ -411,12 +690,16 @@ def build_result_row(root: Path) -> dict[str, Any]:
             visual_success = training["success_rate"]
             mean_turns = training["mean_turns_successful"]
             evidence.append(str(latest))
-            try:
-                behavior_complete = int(latest.stem) == int(
-                    manifest["total_steps"]
-                )
-            except (KeyError, TypeError, ValueError):
-                behavior_complete = False
+            expected_step = int(manifest.get("total_steps", 0))
+            actual_step = int(latest.stem) if latest.stem.isdigit() else 0
+            expected_episodes = int(manifest.get("validation_n_envs", 0))
+            actual_episodes = training.get("trajectories", 0)
+            behavior_complete = (
+                expected_step > 0
+                and actual_step == expected_step
+                and expected_episodes > 0
+                and actual_episodes == expected_episodes
+            )
 
     gpu = _load_json(root / "gpu_metrics" / "gpu_summary.json") or {}
     parity = _load_json(root / "parity.json") or {}
@@ -526,6 +809,7 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def main() -> int:
+    """Analyze rollouts and evaluation episodes, writing summaries and result rows."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--eval-dump", type=Path, action="append", default=[])
     parser.add_argument("--training-jsonl", type=Path, action="append", default=[])

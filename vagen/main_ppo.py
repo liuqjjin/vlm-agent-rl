@@ -39,6 +39,18 @@ def main(config):
     Args:
         config_dict: Hydra configuration dictionary containing training parameters.
     """
+    # P1: Validate configuration before expensive GPU initialization
+    from vagen.utils.config_validation import validate_training_config, print_validation_report
+    from omegaconf import OmegaConf
+
+    config_dict = OmegaConf.to_container(config, resolve=True)
+    errors = validate_training_config(config_dict)
+
+    if not print_validation_report("Training Configuration", errors):
+        import sys
+        print("Configuration validation failed. Fix errors before running.")
+        sys.exit(1)
+
     run_ppo(config)
 
 

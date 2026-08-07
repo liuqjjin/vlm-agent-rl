@@ -7,7 +7,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 NAVIGATION_SERVER_PID=""
 
 usage() {
-  echo "Usage: $0 describe|dry-run|smoke|base-eval|core-screening|episode-screening|confirmatory|anti-cheat|state-preflight|analyze [args]" >&2
+  echo "Usage: $0 describe|validate-matrix|dry-run|smoke|base-eval|core-screening|episode-screening|confirmatory|select-checkpoints|export-checkpoints|final-test|final-results|publish-results|anti-cheat|state-preflight|analyze [args]" >&2
 }
 
 cleanup() {
@@ -89,18 +89,30 @@ case "${PHASE}" in
   describe)
     cat "${ROOT_DIR}/experiments/matrix.yaml"
     ;;
+  validate-matrix)
+    PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" \
+      "${PYTHON_BIN}" -m vagen.analysis.experiment_contract \
+      --matrix "${ROOT_DIR}/experiments/matrix.yaml" \
+      --repo-root "${ROOT_DIR}" \
+      --output "${MATRIX_VALIDATION_OUTPUT:-${ROOT_DIR}/results/gpu/matrix_contract.json}"
+    ;;
   dry-run)
     export DRY_RUN=1
     export PYTHON_BIN
     export TOTAL_STEPS=5
     export TRAIN_BATCH_SIZE=2
-    DRY_RUN_ROOT="${DRY_RUN_ROOT:-/private/tmp/vlm-agent-rl-matrix-dry-run}"
+    if [[ -z "${DRY_RUN_ROOT:-}" ]]; then
+      DRY_RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/vlm-agent-rl-matrix-dry-run.XXXXXX")"
+    fi
+    echo "[INFO] matrix dry-run artifacts: ${DRY_RUN_ROOT}"
     for environment in sokoban navigation; do
       for method in concat_grpo no_concat_gae no_concat_episode_grpo; do
         EXPERIMENT_DIR="${DRY_RUN_ROOT}/${environment}_${method}_seed0" \
           run_training "${method}" "${environment}" 0
       done
-      N_ENVS=2 run_eval "${environment}" none
+      DUMP_DIR="${DRY_RUN_ROOT}/eval/${environment}_none" \
+      N_ENVS=2 \
+        run_eval "${environment}" none
     done
     ;;
   smoke)
@@ -109,7 +121,7 @@ case "${PHASE}" in
   base-eval)
     IFS=',' read -r -a environments <<< "${ENVIRONMENTS:-sokoban,navigation}"
     for environment in "${environments[@]}"; do
-      run_eval "${environment}" none
+      EVALUATION_ROLE=base_eval run_eval "${environment}" none
     done
     ;;
   core-screening)
@@ -169,18 +181,183 @@ case "${PHASE}" in
       done
     done
     ;;
-  anti-cheat)
-    if [[ -z "${EVAL_MODEL_PATH:-}" ]]; then
-      echo "[ERROR] Set EVAL_MODEL_PATH to the selected checkpoint or base model." >&2
+  select-checkpoints)
+    shift
+    run_dirs=("$@")
+    if (( ${#run_dirs[@]} == 0 )); then
+      while IFS= read -r -d '' run_dir; do
+        run_dirs+=("${run_dir}")
+      done < <(
+        find "${EXPERIMENT_ROOT:-${ROOT_DIR}/exps/vlm_agent_rl}" \
+          -mindepth 1 -maxdepth 1 -type d -name '*_confirmatory_*' -print0
+      )
+    fi
+    if (( ${#run_dirs[@]} == 0 )); then
+      echo "[ERROR] no confirmatory training runs found." >&2
       exit 2
     fi
-    IFS=',' read -r -a environments <<< "${ENVIRONMENTS:-sokoban,navigation}"
-    for environment in "${environments[@]}"; do
-      for ablation in none remove shuffle_tiles; do
-        EVAL_METHOD="${EVAL_METHOD:-selected_checkpoint}" \
-        MODEL_PATH="${EVAL_MODEL_PATH}" \
-          run_eval "${environment}" "${ablation}"
-      done
+    for run_dir in "${run_dirs[@]}"; do
+      PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" \
+        "${PYTHON_BIN}" -m vagen.analysis.final_evaluation select \
+        --run "${run_dir}" \
+        --output "${run_dir}/selection/checkpoint_selection.json"
+    done
+    ;;
+  export-checkpoints)
+    shift
+    selections=("$@")
+    if (( ${#selections[@]} == 0 )); then
+      while IFS= read -r -d '' selection; do
+        selections+=("${selection}")
+      done < <(
+        find "${EXPERIMENT_ROOT:-${ROOT_DIR}/exps/vlm_agent_rl}" \
+          -type f -path '*/selection/checkpoint_selection.json' -print0
+      )
+    fi
+    if (( ${#selections[@]} == 0 )); then
+      echo "[ERROR] no checkpoint-selection manifests found." >&2
+      exit 2
+    fi
+    export_root="${EXPORT_ROOT:-${ROOT_DIR}/exps/vlm_agent_rl_exports}"
+    for selection in "${selections[@]}"; do
+      run_dir="$(cd "$(dirname "${selection}")/.." && pwd)"
+      output_dir="${export_root}/$(basename "${run_dir}")"
+      export_args=()
+      if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        export_args+=(--dry-run)
+      fi
+      PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" \
+        "${PYTHON_BIN}" -m vagen.analysis.final_evaluation export \
+        --selection "${selection}" \
+        --output-dir "${output_dir}" \
+        "${export_args[@]}"
+    done
+    ;;
+  final-test)
+    shift
+    export_manifests=("$@")
+    if (( ${#export_manifests[@]} == 0 )); then
+      while IFS= read -r -d '' export_manifest; do
+        export_manifests+=("${export_manifest}")
+      done < <(
+        find "${EXPORT_ROOT:-${ROOT_DIR}/exps/vlm_agent_rl_exports}" \
+          -mindepth 2 -maxdepth 2 -type f -name export_manifest.json -print0
+      )
+    fi
+    if (( ${#export_manifests[@]} == 0 )); then
+      echo "[ERROR] no checkpoint-export manifests found." >&2
+      exit 2
+    fi
+    for export_manifest in "${export_manifests[@]}"; do
+      export_fields=()
+      while IFS= read -r -d '' field; do
+        export_fields+=("${field}")
+      done < <(
+        "${PYTHON_BIN}" - "${export_manifest}" <<'PY'
+import json
+import os
+import sys
+
+payload = json.load(open(sys.argv[1]))
+fields = (
+    payload["environment"],
+    payload["method"],
+    payload["train_seed"],
+    payload["checkpoint_step"],
+    payload["model_path"],
+    payload["source_run_dir"],
+    payload["selection_manifest"],
+)
+for value in fields:
+    os.write(sys.stdout.fileno(), str(value).encode() + b"\0")
+PY
+      )
+      if (( ${#export_fields[@]} != 7 )); then
+        echo "[ERROR] invalid export manifest fields: ${export_manifest}" >&2
+        exit 2
+      fi
+      environment="${export_fields[0]}"
+      method="${export_fields[1]}"
+      train_seed="${export_fields[2]}"
+      checkpoint_step="${export_fields[3]}"
+      model_path="${export_fields[4]}"
+      source_run_dir="${export_fields[5]}"
+      selection_manifest="${export_fields[6]}"
+      dump_dir="${FINAL_TEST_ROOT:-${ROOT_DIR}/exps/eval/final_test}/${environment}/${method}/train_seed_${train_seed}/checkpoint_${checkpoint_step}"
+      EVALUATION_ROLE=final_test \
+      EVAL_METHOD="${method}" \
+      MODEL_PATH="${model_path}" \
+      DUMP_DIR="${dump_dir}" \
+      TAG="final_test_${environment}_${method}_train_seed_${train_seed}" \
+      SOURCE_RUN_DIR="${source_run_dir}" \
+      SOURCE_SELECTION_MANIFEST="${selection_manifest}" \
+      SOURCE_EXPORT_MANIFEST="${export_manifest}" \
+      SOURCE_METHOD="${method}" \
+      SOURCE_ENVIRONMENT="${environment}" \
+      SOURCE_TRAIN_SEED="${train_seed}" \
+      SOURCE_CHECKPOINT_STEP="${checkpoint_step}" \
+      WRITE_MANIFEST_ON_DRY_RUN="${DRY_RUN:-0}" \
+        run_eval "${environment}" none
+    done
+    ;;
+  final-results)
+    shift
+    final_runs=("$@")
+    if (( ${#final_runs[@]} == 0 )); then
+      while IFS= read -r -d '' manifest; do
+        final_runs+=("$(dirname "${manifest}")")
+      done < <(
+        find "${FINAL_TEST_ROOT:-${ROOT_DIR}/exps/eval/final_test}" \
+          -type f -name manifest.json -print0
+      )
+    fi
+    if (( ${#final_runs[@]} == 0 )); then
+      echo "[ERROR] no final-test runs found." >&2
+      exit 2
+    fi
+    final_args=()
+    for final_run in "${final_runs[@]}"; do
+      final_args+=(--run "${final_run}")
+    done
+    base_args=()
+    while IFS= read -r -d '' base_manifest; do
+      manifest_role="$("${PYTHON_BIN}" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("evaluation_role", ""))' "${base_manifest}")"
+      if [[ "${manifest_role}" == "base_eval" ]]; then
+        base_args+=(--base-run "$(dirname "${base_manifest}")")
+      fi
+    done < <(find "${ROOT_DIR}/exps/eval" -type f -name manifest.json -print0)
+    PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" \
+      "${PYTHON_BIN}" -m vagen.analysis.final_evaluation aggregate \
+      "${final_args[@]}" \
+      "${base_args[@]}" \
+      --expected-train-seeds "${CONFIRMATORY_SEEDS:-0,1,2}" \
+      --expected-methods "${FINAL_EXPECTED_METHODS:-${SELECTED_METHODS:-no_concat_episode_grpo}}" \
+      --expected-environments "${ENVIRONMENTS:-sokoban,navigation}" \
+      --output-dir "${FINAL_RESULTS_DIR:-${ROOT_DIR}/results/gpu/final}"
+    ;;
+  publish-results)
+    PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" \
+      "${PYTHON_BIN}" -m vagen.analysis.final_evaluation publish \
+      --results-dir "${FINAL_RESULTS_DIR:-${ROOT_DIR}/results/gpu/final}" \
+      --output "${PUBLISHED_RESULTS_PATH:-${ROOT_DIR}/results/main_results.csv}"
+    ;;
+  anti-cheat)
+    if [[ -z "${EVAL_MODEL_PATH:-}" ]]; then
+      echo "[ERROR] Set EVAL_MODEL_PATH to an exported model directory." >&2
+      exit 2
+    fi
+    if [[ -z "${EVAL_ENVIRONMENT:-}" ]]; then
+      echo "[ERROR] Set EVAL_ENVIRONMENT to the checkpoint's training environment." >&2
+      exit 2
+    fi
+    model_run_name="$(basename "$(dirname "${EVAL_MODEL_PATH}")")"
+    anti_cheat_root="${ANTI_CHEAT_ROOT:-${ROOT_DIR}/exps/eval/anti_cheat/${model_run_name}}"
+    for ablation in none remove shuffle_tiles; do
+      EVALUATION_ROLE=anti_cheat \
+      EVAL_METHOD="${EVAL_METHOD:-selected_checkpoint}" \
+      MODEL_PATH="${EVAL_MODEL_PATH}" \
+      DUMP_DIR="${anti_cheat_root}/${EVAL_ENVIRONMENT}_${ablation}" \
+        run_eval "${EVAL_ENVIRONMENT}" "${ablation}"
     done
     ;;
   state-preflight)

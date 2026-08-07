@@ -17,12 +17,15 @@ SUCCESS_REWARD="${SUCCESS_REWARD:-1.0}"
 PROCESS_REWARD_CAP="${PROCESS_REWARD_CAP:-0.2}"
 N_GPUS="${N_GPUS:-1}"
 LORA_RANK="${LORA_RANK:-32}"
+ROLLOUT_BACKEND="${ROLLOUT_BACKEND:-vllm}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.50}"
 TRAINER_LOGGER="${TRAINER_LOGGER:-wandb}"
 WANDB_MODE_VALUE="${WANDB_MODE:-offline}"
 VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-True}"
 TEST_FREQ="${TEST_FREQ:-20}"
 SAVE_FREQ="${SAVE_FREQ:-100}"
+MAX_ACTOR_CKPTS_TO_KEEP="${MAX_ACTOR_CKPTS_TO_KEEP:-5}"
+MAX_CRITIC_CKPTS_TO_KEEP="${MAX_CRITIC_CKPTS_TO_KEEP:-1}"
 DRY_RUN="${DRY_RUN:-0}"
 ALLOW_DIRTY="${ALLOW_DIRTY:-0}"
 
@@ -74,12 +77,35 @@ if ! [[ "${N_GPUS}" =~ ^[1-9][0-9]*$ ]]; then
   echo "[ERROR] N_GPUS must be a positive integer." >&2
   exit 1
 fi
+if ! [[ "${LORA_RANK}" =~ ^[0-9]+$ ]]; then
+  echo "[ERROR] LORA_RANK must be a non-negative integer." >&2
+  exit 1
+fi
+case "${ROLLOUT_BACKEND}" in
+  vllm) ;;
+  *)
+    echo "[ERROR] Formal training currently supports only ROLLOUT_BACKEND=vllm." >&2
+    exit 1
+    ;;
+esac
+if [[ "${ROLLOUT_BACKEND}" == "vllm" ]] && (( LORA_RANK > 512 )); then
+  echo "[ERROR] vLLM supports LORA_RANK up to 512 in this vendored verl version." >&2
+  exit 1
+fi
 if ! [[ "${TRAIN_BATCH_SIZE}" =~ ^[1-9][0-9]*$ ]]; then
   echo "[ERROR] TRAIN_BATCH_SIZE must be a positive integer." >&2
   exit 1
 fi
 if ! [[ "${TOTAL_STEPS}" =~ ^[1-9][0-9]*$ ]]; then
   echo "[ERROR] TOTAL_STEPS must be a positive integer." >&2
+  exit 1
+fi
+if ! [[ "${MAX_ACTOR_CKPTS_TO_KEEP}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[ERROR] MAX_ACTOR_CKPTS_TO_KEEP must be a positive integer." >&2
+  exit 1
+fi
+if ! [[ "${MAX_CRITIC_CKPTS_TO_KEEP}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[ERROR] MAX_CRITIC_CKPTS_TO_KEEP must be a positive integer." >&2
   exit 1
 fi
 
@@ -136,6 +162,31 @@ if [[ "${CONCAT_MULTI_TURN}" == "True" ]]; then
 else
   MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-512}"
 fi
+REQUIRED_MODEL_TOKENS=$((MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))
+DEFAULT_MAX_NUM_BATCHED_TOKENS=10000
+if (( REQUIRED_MODEL_TOKENS > DEFAULT_MAX_NUM_BATCHED_TOKENS )); then
+  DEFAULT_MAX_NUM_BATCHED_TOKENS="${REQUIRED_MODEL_TOKENS}"
+fi
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-${DEFAULT_MAX_NUM_BATCHED_TOKENS}}"
+if ! [[ "${MAX_NUM_BATCHED_TOKENS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[ERROR] MAX_NUM_BATCHED_TOKENS must be a positive integer." >&2
+  exit 1
+fi
+if (( MAX_NUM_BATCHED_TOKENS < REQUIRED_MODEL_TOKENS )); then
+  echo "[ERROR] MAX_NUM_BATCHED_TOKENS must cover max prompt + response length (${REQUIRED_MODEL_TOKENS})." >&2
+  exit 1
+fi
+ROLLOUT_LOAD_FORMAT="default"
+ROLLOUT_LAYERED_SUMMON=False
+LORA_ROLLOUT_ARGS=()
+if (( LORA_RANK > 0 )); then
+  ROLLOUT_LOAD_FORMAT=safetensors
+  ROLLOUT_LAYERED_SUMMON=True
+  LORA_ROLLOUT_ARGS+=(
+    "actor_rollout_ref.rollout.load_format=safetensors"
+    "actor_rollout_ref.rollout.layered_summon=True"
+  )
+fi
 
 MODEL_PATH_LOWER="$(printf '%s' "${MODEL_PATH}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${MODEL_PATH_LOWER}" == *"qwen3-vl"* || "${MODEL_PATH_LOWER}" == *"qwen3vl"* ]]; then
@@ -172,7 +223,6 @@ if [[ "${TRAINER_LOGGER}" == "wandb" ]]; then
   LOGGER_CONFIG="[console,wandb]"
 fi
 
-SGLANG_GPU_ARGS=()
 if command -v nvidia-smi >/dev/null 2>&1; then
   GPU_QUERY_ARGS=()
   VISIBLE_GPU_SELECTORS="${CUDA_VISIBLE_DEVICES:-}"
@@ -190,16 +240,69 @@ if command -v nvidia-smi >/dev/null 2>&1; then
       --query-gpu=name --format=csv,noheader \
       | head -n 1
   )"
-  if [[ "${GPU_NAME}" == *"B200"* || "${GPU_NAME}" == *"RTX 6000 Pro"* ]]; then
-    SGLANG_GPU_ARGS+=(
-      "+actor_rollout_ref.rollout.engine_kwargs.sglang.attention_backend=flashinfer"
-      "+actor_rollout_ref.rollout.engine_kwargs.sglang.mm_attention_backend=triton_attn"
-    )
+  if [[ -z "${GPU_NAME}" && "${DRY_RUN}" != "1" ]]; then
+    echo "[ERROR] nvidia-smi did not report a visible NVIDIA GPU." >&2
+    exit 2
   fi
 elif [[ "${DRY_RUN}" != "1" ]]; then
   echo "[ERROR] Qwen2.5-VL training requires an NVIDIA GPU." >&2
   exit 2
 fi
+
+VLLM_CONTRACT_REQUIRE_IMPORT=0
+if [[ "${DRY_RUN}" != "1" && "${ROLLOUT_BACKEND}" == "vllm" ]]; then
+  VLLM_CONTRACT_REQUIRE_IMPORT=1
+fi
+VLLM_CONTRACT_ROOT="${ROOT_DIR}" \
+VLLM_CONTRACT_BACKEND="${ROLLOUT_BACKEND}" \
+VLLM_CONTRACT_LORA_RANK="${LORA_RANK}" \
+VLLM_CONTRACT_REQUIRE_IMPORT="${VLLM_CONTRACT_REQUIRE_IMPORT}" \
+PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl${PYTHONPATH:+:${PYTHONPATH}}" \
+  "${PYTHON_BIN}" - <<'PY'
+import importlib.util
+import os
+from pathlib import Path
+
+backend = os.environ["VLLM_CONTRACT_BACKEND"]
+lora_rank = int(os.environ["VLLM_CONTRACT_LORA_RANK"])
+if backend != "vllm" or lora_rank == 0:
+    raise SystemExit(0)
+
+root = Path(os.environ["VLLM_CONTRACT_ROOT"])
+replica_source = root / "verl/verl/workers/rollout/replica.py"
+async_source = root / "verl/verl/workers/rollout/vllm_rollout/vllm_async_server.py"
+spmd_source = root / "verl/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd.py"
+required_tokens = {
+    replica_source: ('RolloutReplicaRegistry.register("vllm"',),
+    async_source: ("class vLLMReplica", "enable_lora", "LoRARequest"),
+    spmd_source: (
+        "class vLLMAsyncRollout",
+        "async def update_weights",
+        "TensorLoRARequest",
+        "remove_lora",
+        "add_lora",
+    ),
+}
+for path, tokens in required_tokens.items():
+    try:
+        source = path.read_text()
+    except OSError as exc:
+        raise SystemExit(f"[ERROR] Missing vendored vLLM LoRA contract file {path}: {exc}") from exc
+    missing = [token for token in tokens if token not in source]
+    if missing:
+        raise SystemExit(
+            f"[ERROR] Vendored vLLM LoRA contract is incomplete in {path}: missing {missing}"
+        )
+
+if os.environ["VLLM_CONTRACT_REQUIRE_IMPORT"] == "1":
+    if importlib.util.find_spec("vllm") is None:
+        raise SystemExit("[ERROR] vLLM is not installed in the formal-run Python environment")
+    from verl.workers.rollout.base import get_rollout_class
+    from verl.workers.rollout.replica import get_rollout_replica_class
+
+    get_rollout_class("vllm", "async")
+    get_rollout_replica_class("vllm")
+PY
 
 if [[ "${ENVIRONMENT}" == "navigation" && "${DRY_RUN}" != "1" ]]; then
   NAVIGATION_SERVER_URL="${NAVIGATION_SERVER_URL:-http://127.0.0.1:8000}"
@@ -254,13 +357,13 @@ TRAIN_COMMAND=(
   "actor_rollout_ref.actor.checkpoint.save_contents=[model,hf_model,optimizer,extra]"
   "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1"
   "actor_rollout_ref.ref.fsdp_config.param_offload=True"
-  "actor_rollout_ref.rollout.name=sglang"
+  "actor_rollout_ref.rollout.name=${ROLLOUT_BACKEND}"
   "actor_rollout_ref.rollout.mode=async"
   "actor_rollout_ref.rollout.n=${ROLLOUT_N}"
   "actor_rollout_ref.rollout.calculate_log_probs=True"
   "actor_rollout_ref.rollout.tensor_model_parallel_size=1"
   "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1"
-  "actor_rollout_ref.rollout.max_num_batched_tokens=10000"
+  "actor_rollout_ref.rollout.max_num_batched_tokens=${MAX_NUM_BATCHED_TOKENS}"
   "actor_rollout_ref.rollout.gpu_memory_utilization=${GPU_MEMORY_UTILIZATION}"
   "actor_rollout_ref.rollout.enforce_eager=True"
   "actor_rollout_ref.rollout.free_cache_engine=True"
@@ -278,6 +381,8 @@ TRAIN_COMMAND=(
   "trainer.n_gpus_per_node=${N_GPUS}"
   "trainer.nnodes=1"
   "trainer.save_freq=${SAVE_FREQ}"
+  "trainer.max_actor_ckpt_to_keep=${MAX_ACTOR_CKPTS_TO_KEEP}"
+  "trainer.max_critic_ckpt_to_keep=${MAX_CRITIC_CKPTS_TO_KEEP}"
   "trainer.test_freq=${TEST_FREQ}"
   "trainer.project_name=${PROJECT_NAME}"
   "trainer.experiment_name=${EXPERIMENT_NAME}"
@@ -288,6 +393,9 @@ TRAIN_COMMAND=(
   "trainer.log_val_generations=16"
   "trainer.total_training_steps=${TOTAL_STEPS}"
 )
+if (( ${#LORA_ROLLOUT_ARGS[@]} > 0 )); then
+  TRAIN_COMMAND+=("${LORA_ROLLOUT_ARGS[@]}")
+fi
 if [[ "${METHOD}" == "no_concat_episode_grpo" ]]; then
   TRAIN_COMMAND+=(
     "algorithm.no_concat_episode_grpo.reward_mode=${REWARD_MODE}"
@@ -309,10 +417,6 @@ if [[ "${METHOD}" == "no_concat_gae" ]]; then
     "critic.model.fsdp_config.optimizer_offload=True"
   )
 fi
-if (( ${#SGLANG_GPU_ARGS[@]} > 0 )); then
-  TRAIN_COMMAND+=("${SGLANG_GPU_ARGS[@]}")
-fi
-
 MANIFEST_COMMIT="${GIT_COMMIT}" \
 MANIFEST_VERL_COMMIT="${VERL_COMMIT}" \
 MANIFEST_GIT_DIRTY="${GIT_DIRTY}" \
@@ -338,18 +442,25 @@ MANIFEST_WANDB_MODE="${WANDB_MODE_VALUE}" \
 MANIFEST_WANDB_DIR="${WANDB_DIR_VALUE}" \
 MANIFEST_MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH}" \
 MANIFEST_MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH}" \
+MANIFEST_MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS}" \
 MANIFEST_LORA_RANK="${LORA_RANK}" \
+MANIFEST_ROLLOUT_BACKEND="${ROLLOUT_BACKEND}" \
+MANIFEST_ROLLOUT_LOAD_FORMAT="${ROLLOUT_LOAD_FORMAT}" \
+MANIFEST_ROLLOUT_LAYERED_SUMMON="${ROLLOUT_LAYERED_SUMMON}" \
 MANIFEST_N_GPUS="${N_GPUS}" \
 MANIFEST_GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION}" \
 MANIFEST_VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN}" \
 MANIFEST_TEST_FREQ="${TEST_FREQ}" \
 MANIFEST_SAVE_FREQ="${SAVE_FREQ}" \
+MANIFEST_MAX_ACTOR_CKPTS_TO_KEEP="${MAX_ACTOR_CKPTS_TO_KEEP}" \
+MANIFEST_MAX_CRITIC_CKPTS_TO_KEEP="${MAX_CRITIC_CKPTS_TO_KEEP}" \
 MANIFEST_EXPERIMENT_DIR="${EXPERIMENT_DIR}" \
 PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl${PYTHONPATH:+:${PYTHONPATH}}" \
   "${PYTHON_BIN}" - "${TRAIN_COMMAND[@]}" <<'PY'
 import os
 import sys
 
+from vagen.utils.config_validation import load_validation_n_envs
 from vagen.utils.run_manifest import write_compatible_manifest
 
 def as_bool(name: str) -> bool:
@@ -413,7 +524,13 @@ manifest = {
     "wandb_dir": os.environ["MANIFEST_WANDB_DIR"],
     "max_prompt_length": int(os.environ["MANIFEST_MAX_PROMPT_LENGTH"]),
     "max_response_length": int(os.environ["MANIFEST_MAX_RESPONSE_LENGTH"]),
+    "max_num_batched_tokens": int(
+        os.environ["MANIFEST_MAX_NUM_BATCHED_TOKENS"]
+    ),
     "lora_rank": int(os.environ["MANIFEST_LORA_RANK"]),
+    "rollout_backend": os.environ["MANIFEST_ROLLOUT_BACKEND"],
+    "rollout_load_format": os.environ["MANIFEST_ROLLOUT_LOAD_FORMAT"],
+    "rollout_layered_summon": as_bool("MANIFEST_ROLLOUT_LAYERED_SUMMON"),
     "n_gpus": int(os.environ["MANIFEST_N_GPUS"]),
     "gpu_memory_utilization": float(
         os.environ["MANIFEST_GPU_MEMORY_UTILIZATION"]
@@ -421,6 +538,13 @@ manifest = {
     "val_before_train": as_bool("MANIFEST_VAL_BEFORE_TRAIN"),
     "test_freq": int(os.environ["MANIFEST_TEST_FREQ"]),
     "save_freq": int(os.environ["MANIFEST_SAVE_FREQ"]),
+    "max_actor_ckpts_to_keep": int(
+        os.environ["MANIFEST_MAX_ACTOR_CKPTS_TO_KEEP"]
+    ),
+    "max_critic_ckpts_to_keep": int(
+        os.environ["MANIFEST_MAX_CRITIC_CKPTS_TO_KEEP"]
+    ),
+    "validation_n_envs": load_validation_n_envs(os.environ["MANIFEST_VAL_FILE"]),
     "resume_mode": "auto",
     "command": sys.argv[1:],
 }

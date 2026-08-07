@@ -7,7 +7,7 @@ envs:
   - name: RemoteEnv
     n_envs: 30
     tag_id: navigation_base
-    seed: [30, 59, 1]
+    seed: [30, 59, 1]  # Final test: base tasks 30-59, disjoint from train (base_train) and val (base 0-29)
     max_turns: 10
     observation_ablation: none
     config:

@@ -8,8 +8,10 @@ import subprocess
 import sys
 
 import pytest
+from omegaconf import OmegaConf
 
 from vagen.evaluate.run_eval import _failed_evaluation_results
+from vagen.utils.config_validation import validate_training_config
 from vagen.utils.run_manifest import write_compatible_manifest
 
 
@@ -60,6 +62,7 @@ def test_episode_grpo_entrypoint_is_critic_free_and_auditable(tmp_path: Path) ->
     assert "critic.optim.lr=" not in result.stdout
     assert "algorithm.no_concat_episode_grpo.reward_mode=outcome" in result.stdout
     assert "algorithm.no_concat_episode_grpo.loss_weighting=trajectory" in result.stdout
+    assert "actor_rollout_ref.rollout.name=vllm" in result.stdout
     assert "trainer.logger=\\[console\\,wandb\\]" in result.stdout
 
     experiment_dir = tmp_path / "no_concat_episode_grpo"
@@ -75,6 +78,8 @@ def test_episode_grpo_entrypoint_is_critic_free_and_auditable(tmp_path: Path) ->
     assert manifest["parity_gate_enabled"] is True
     assert manifest["parity_thresholds"]["max_p95_ratio_deviation"] == 0.1
     assert manifest["filter_enabled"] is False
+    assert manifest["rollout_backend"] == "vllm"
+    assert manifest["validation_n_envs"] == 128
     assert manifest["max_response_length"] == 512
     assert manifest["commit"]
     assert manifest["verl_commit"]
@@ -82,6 +87,36 @@ def test_episode_grpo_entrypoint_is_critic_free_and_auditable(tmp_path: Path) ->
     replay = (experiment_dir / "train_command.sh").read_text()
     assert "WANDB_MODE=offline" in replay
     assert "PYTHONHASHSEED=0" in replay
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ("{}\n", "non-empty envs list"),
+        ("envs:\n  - name: RemoteEnv\n", "n_envs must be a positive integer"),
+        ("envs:\n  - n_envs: 0\n", "n_envs must be a positive integer"),
+        ("envs:\n  - n_envs: true\n", "n_envs must be a positive integer"),
+    ],
+)
+def test_manifest_validation_count_parser_fails_closed(
+    tmp_path: Path, payload: str, message: str
+) -> None:
+    from vagen.utils.config_validation import load_validation_n_envs
+
+    config = tmp_path / "validation.yaml"
+    config.write_text(payload)
+    with pytest.raises(ValueError, match=message):
+        load_validation_n_envs(config)
+
+
+def test_manifest_validation_count_parser_sums_all_environment_specs(
+    tmp_path: Path,
+) -> None:
+    from vagen.utils.config_validation import load_validation_n_envs
+
+    config = tmp_path / "validation.yaml"
+    config.write_text("envs:\n  - n_envs: 3\n  - n_envs: 5\n")
+    assert load_validation_n_envs(config) == 8
 
 
 @pytest.mark.parametrize(
@@ -120,14 +155,32 @@ def test_non_episode_entrypoints_do_not_leak_episode_overrides(
     assert manifest["loss_weighting"] is None
 
 
+@pytest.mark.parametrize("environment", ["sokoban", "navigation"])
 @pytest.mark.parametrize(
     "method", ["concat_grpo", "no_concat_gae", "no_concat_episode_grpo"]
 )
 def test_training_entrypoint_composes_current_hydra_schema(
-    tmp_path: Path, method: str
+    tmp_path: Path, method: str, environment: str
 ) -> None:
-    result = _dry_run(tmp_path, METHOD=method)
+    result = _dry_run(tmp_path, METHOD=method, ENVIRONMENT=environment)
     assert result.returncode == 0, result.stderr
+    expected_batched_tokens = (
+        13000 if environment == "navigation" and method == "concat_grpo" else 10000
+    )
+    assert (
+        f"actor_rollout_ref.rollout.max_num_batched_tokens={expected_batched_tokens}"
+        in result.stdout
+    )
+    assert "trainer.max_actor_ckpt_to_keep=5" in result.stdout
+    assert "trainer.max_critic_ckpt_to_keep=1" in result.stdout
+    assert "actor_rollout_ref.rollout.load_format=safetensors" in result.stdout
+    assert "actor_rollout_ref.rollout.layered_summon=True" in result.stdout
+    manifest = json.loads((tmp_path / method / "manifest.json").read_text())
+    assert manifest["max_num_batched_tokens"] == expected_batched_tokens
+    assert manifest["max_actor_ckpts_to_keep"] == 5
+    assert manifest["max_critic_ckpts_to_keep"] == 1
+    assert manifest["rollout_load_format"] == "safetensors"
+    assert manifest["rollout_layered_summon"] is True
     command = tmp_path / method / "train_command.sh"
     compose = subprocess.run(
         [str(command), "--cfg", "job", "--resolve"],
@@ -139,6 +192,24 @@ def test_training_entrypoint_composes_current_hydra_schema(
     assert compose.returncode == 0, compose.stderr
     assert f"adv_estimator: {'grpo' if method == 'concat_grpo' else method}" in compose.stdout
     assert "seed: 0" in compose.stdout
+    resolved = OmegaConf.to_container(OmegaConf.create(compose.stdout), resolve=True)
+    assert isinstance(resolved, dict)
+    assert (
+        resolved["actor_rollout_ref"]["rollout"]["max_num_batched_tokens"]
+        >= resolved["data"]["max_prompt_length"]
+        + resolved["data"]["max_response_length"]
+    )
+    assert resolved["actor_rollout_ref"]["rollout"]["load_format"] == "safetensors"
+    assert resolved["actor_rollout_ref"]["rollout"]["layered_summon"] is True
+    assert validate_training_config(resolved) == []
+    actor_rollout_ref = resolved["actor_rollout_ref"]
+    assert actor_rollout_ref["actor"]["strategy"] == "fsdp"
+    assert actor_rollout_ref["model"]["lora_rank"] == 32
+    assert actor_rollout_ref["rollout"]["name"] == "vllm"
+    assert resolved["trainer"]["n_gpus_per_node"] == 1
+    assert resolved["critic"]["enable"] is (method == "no_concat_gae")
+    if method == "no_concat_gae":
+        assert resolved["critic"]["strategy"] == "fsdp"
 
 
 @pytest.mark.parametrize("environment", sorted(EVAL_SCRIPTS))
@@ -200,7 +271,11 @@ def test_visual_eval_wrapper_dry_run_declares_auditable_runtime(
     assert "eval_qwen25_vl_3b.sh" in result.stdout
     expected_count = 30 if environment == "navigation" else 128
     assert f"envs.0.n_envs={expected_count}" in result.stdout
-    seed_start = 30 if environment == "navigation" else 10001
+    seed_start = {
+        "frozenlake": 10001,
+        "sokoban": 10129,
+        "navigation": 30,
+    }[environment]
     seed_max = seed_start + expected_count - 1
     assert f"envs.0.seed=\\[{seed_start}\\,{seed_max}\\,1\\]" in result.stdout
 
@@ -278,6 +353,12 @@ def test_core_screening_covers_every_method_and_environment(
         ("N_GPUS", "2", "restricted to N_GPUS=1"),
         ("ROLLOUT_N", "not-a-number", "ROLLOUT_N must be a positive integer"),
         ("SEED", "-1", "SEED must be a non-negative integer"),
+        ("LORA_RANK", "not-a-number", "LORA_RANK must be a non-negative integer"),
+        ("LORA_RANK", "513", "supports LORA_RANK up to 512"),
+        ("ROLLOUT_BACKEND", "unknown", "supports only ROLLOUT_BACKEND=vllm"),
+        ("ROLLOUT_BACKEND", "sglang", "supports only ROLLOUT_BACKEND=vllm"),
+        ("MAX_ACTOR_CKPTS_TO_KEEP", "0", "must be a positive integer"),
+        ("MAX_NUM_BATCHED_TOKENS", "100", "must cover max prompt + response"),
     ],
 )
 def test_entrypoint_rejects_invalid_control_values(

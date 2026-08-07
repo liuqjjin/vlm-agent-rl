@@ -1,6 +1,7 @@
 # Upstream provenance and reproducibility
 
-This file records the source state audited on 2026-07-27. Commit identifiers,
+This file records the source state audited on 2026-07-27 and revalidated on
+2026-08-08. Commit identifiers,
 not moving branch names, define the implementation reviewed for this project.
 
 ## Source ledger
@@ -10,7 +11,7 @@ not moving branch names, define the implementation reviewed for this project.
 | VAGEN | Top-level framework and environment loop | [mll-lab-nu/VAGEN](https://github.com/mll-lab-nu/VAGEN) | `main` | [`2936322a6f6c02fbd29ca28e4b6ec37eefefc081`](https://github.com/mll-lab-nu/VAGEN/commit/2936322a6f6c02fbd29ca28e4b6ec37eefefc081) | MIT |
 | VAGEN historical no-concat line | Rename/history audit only; not a separate dependency | [mll-lab-nu/VAGEN](https://github.com/mll-lab-nu/VAGEN) | `vagen-lite` | [`527c82de00a44a0b07327676d5c55d9bf77d0f82`](https://github.com/mll-lab-nu/VAGEN/commit/527c82de00a44a0b07327676d5c55d9bf77d0f82) | MIT |
 | VAGEN verl fork | Ray/FSDP/SGLang/PPO submodule base | [JamesKrW/verl](https://github.com/JamesKrW/verl) | `vagen-lite` | [`3fe0a29975e1b02ae2bd1dec249f7807dd7966f5`](https://github.com/JamesKrW/verl/commit/3fe0a29975e1b02ae2bd1dec249f7807dd7966f5) | Apache-2.0 |
-| Local verl delta | Sparse critic mask and policy weights | [liuqjjin/verl](https://github.com/liuqjjin/verl) | `vagen-value-mask-policy-weights` | [`fecc1520af10cf266ba1947c6b3b9bd5259fe926`](https://github.com/liuqjjin/verl/commit/fecc1520af10cf266ba1947c6b3b9bd5259fe926) | Apache-2.0 |
+| Local verl delta | Sparse critic mask and policy weights | [liuqjjin/verl](https://github.com/liuqjjin/verl) | `vagen-value-mask-policy-weights` | [`6c705af74f54a6b5db609de37206358ebec57208`](https://github.com/liuqjjin/verl/commit/6c705af74f54a6b5db609de37206358ebec57208) | Apache-2.0 |
 | verl-agent | Read-only GiGPO/state-grouping design reference | [langfengQ/verl-agent](https://github.com/langfengQ/verl-agent) | `master` | [`20bd331bdbc9026a5668e11362178e10ab7400c8`](https://github.com/langfengQ/verl-agent/commit/20bd331bdbc9026a5668e11362178e10ab7400c8) | Apache-2.0 |
 
 At audit time, `git ls-remote` returned both recorded VAGEN heads, the
@@ -52,10 +53,12 @@ git log --oneline 2936322a6f6c02fbd29ca28e4b6ec37eefefc081..HEAD
 
 ## Local changes inside `verl/`
 
-The submodule has exactly two implementation commits on top of `3fe0a299`:
+The submodule has exactly three implementation commits on top of `3fe0a299`:
 
 1. `71b5c5c7` — preserve the optional `value_mask` in critic update batches.
 2. `fecc1520` — consume normalized `policy_weights` in the actor objective.
+3. `6c705af7` — bind the actor helper on the real update path and exercise
+   `update_policy` with an optimizer-level CPU regression.
 
 The delta touches only:
 
@@ -65,9 +68,10 @@ verl/workers/actor/dp_actor.py
 verl/trainer/ppo/core_algos.py
 tests/trainer/ppo/test_sparse_value_supervision_on_cpu.py
 tests/trainer/ppo/test_policy_weights_on_cpu.py
+tests/trainer/ppo/test_policy_weights_integration.py
 ```
 
-It contains 148 added lines and one removed line. Ray orchestration, FSDP,
+It contains 238 added lines and one removed line. Ray orchestration, FSDP,
 rollout engines, schedulers, and upstream advantage implementations were not
 forked or replaced.
 
@@ -75,7 +79,7 @@ Inspect the exact delta with:
 
 ```bash
 git -C verl diff --stat \
-  3fe0a29975e1b02ae2bd1dec249f7807dd7966f5..fecc1520af10cf266ba1947c6b3b9bd5259fe926
+  3fe0a29975e1b02ae2bd1dec249f7807dd7966f5..6c705af74f54a6b5db609de37206358ebec57208
 ```
 
 ## Runtime pins

@@ -1,26 +1,25 @@
 # Copyright 2025 Bytedance Ltd.
 # Licensed under the Apache License, Version 2.0
 
-import asyncio
+import importlib
 import logging
 import os
-import re
+import traceback
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from PIL import Image
-from .agent_loop_no_concat import AgentLoopBase, AgentLoopOutput, register
+
+from .agent_loop_no_concat import AgentLoopBase, AgentLoopOutput
+from .gym_agent_loop import _flatten_text_only_content, _normalize_images, convert_obs_to_content, extract_success
+from ..envs.gym_image_env import GymImageEnv
 from verl.utils.profiler import simple_timer
 from verl.utils.rollout_trace import rollout_trace_op
-from ..envs.gym_image_env import GymImageEnv
-from omegaconf import OmegaConf
-import traceback
-import importlib
 from vagen.utils.state_anchor import canonical_state_anchor
+
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
-from .gym_agent_loop import convert_obs_to_content, extract_success, _flatten_text_only_content, _normalize_images
 
 
 class AgentState(Enum):
@@ -46,14 +45,15 @@ class AgentData:
         cur_anchor: Optional[str] = None,
         group_idx: int = 0,
         traj_idx: int = 0,
+        is_padding: bool = False,
     ):
         self.sys_msg: Optional[Dict[str, Any]] = sys_msg
         self.sys_images: Optional[List[Image.Image]] = sys_images
-        
+
         self.cur_msg: Optional[Dict[str, Any]] = cur_msg
         self.cur_images: Optional[List[Image.Image]] = cur_images
         self.cur_anchor = cur_anchor
-        
+
         self.metrics = metrics
         self.request_id = request_id
         self.env = env
@@ -61,6 +61,7 @@ class AgentData:
         self.env_name = env_name
         self.group_idx = group_idx
         self.traj_idx = traj_idx
+        self.is_padding = is_padding  # Store padding sentinel
         # Token buffers
         self.turn_prompt_ids: Optional[List[int]] = None
         self.turn_response_ids: Optional[List[int]] = None
@@ -102,6 +103,7 @@ class GymAgentLoop(AgentLoopBase):
     async def run(self, sampling_params: Dict[str, Any], **kwargs) -> AgentLoopOutput:
         metrics: Dict[str, Any] = {}
         request_id = uuid4().hex
+        is_padding = kwargs.get("_is_padding", False)  # Propagate padding sentinel
 
         # Build env (lazy import on first use)
         env_name = kwargs["env_name"]
@@ -148,6 +150,7 @@ class GymAgentLoop(AgentLoopBase):
             env_name=kwargs["env_name"],
             group_idx=kwargs["group_idx"],
             traj_idx=kwargs["traj_idx"],
+            is_padding=is_padding,
         )
 
         # State machine: always GENERATE -> INTERACT, and decide termination inside INTERACT
@@ -296,6 +299,7 @@ class GymAgentLoop(AgentLoopBase):
                 "traj_idx": agent_data.traj_idx,
                 "turn_idx": agent_data.env_turns,
                 "state_anchor": state_anchor,
+                "_is_padding": agent_data.is_padding,  # Propagate from AgentData
                           
             },
         )

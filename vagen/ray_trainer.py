@@ -72,6 +72,53 @@ from vagen.utils.logprob_parity import (
 import vagen.custom_advantage  # noqa: F401  # registers advantage estimators
 from vagen.custom_metric.metric import METRIC_REGISTRY
 from vagen.custom_filter.filter import FILTER_REGISTRY
+
+
+def pad_no_concat_validation_batch(
+    data: DataProto,
+    size_divisor: int,
+) -> tuple[DataProto, int]:
+    """Pad trajectory inputs and mark only the appended copies.
+
+    A no-concat input can emit a variable number of turn rows. Marking the
+    input trajectory before generation lets every emitted turn inherit a stable
+    padding identity that does not depend on output row positions.
+    """
+    data.non_tensor_batch["_is_padding"] = np.zeros(len(data), dtype=bool)
+    padded, pad_size = pad_dataproto_to_divisor(data, size_divisor)
+    if pad_size:
+        padded.non_tensor_batch["_is_padding"][-pad_size:] = True
+    return padded, pad_size
+
+
+def filter_no_concat_validation_padding(data: DataProto) -> DataProto:
+    """Remove all generated turns belonging to padded input trajectories."""
+    if "_is_padding" not in data.non_tensor_batch:
+        raise ValueError(
+            "No-concat validation requires '_is_padding' sentinel in output. "
+            f"Found keys: {list(data.non_tensor_batch.keys())}"
+        )
+
+    markers = np.asarray(data.non_tensor_batch["_is_padding"], dtype=object).reshape(-1)
+    if len(markers) != len(data):
+        raise ValueError(
+            "No-concat validation padding sentinel length mismatch: "
+            f"markers={len(markers)}, rows={len(data)}"
+        )
+    if not all(isinstance(value, (bool, np.bool_)) for value in markers):
+        bad_types = sorted(
+            {
+                type(value).__name__
+                for value in markers
+                if not isinstance(value, (bool, np.bool_))
+            }
+        )
+        raise TypeError(f"'_is_padding' must contain booleans, got {bad_types}")
+
+    valid_indices = np.flatnonzero(~markers.astype(bool)).tolist()
+    return data.select_idxs(valid_indices)
+
+
 @dataclass
 class ResourcePoolManager:
     """
@@ -847,11 +894,10 @@ class RayPPOTrainer:
                 else self.config.actor_rollout_ref.rollout.agent.num_workers
             )
 
-            # In no-concat mode, save original uids before padding for filtering later
-            if not self.concat_multi_turn:
-                original_uids = set(test_gen_batch.non_tensor_batch["uid"])
-
-            test_gen_batch_padded, pad_size = pad_dataproto_to_divisor(test_gen_batch, size_divisor)
+            if self.concat_multi_turn:
+                test_gen_batch_padded, pad_size = pad_dataproto_to_divisor(test_gen_batch, size_divisor)
+            else:
+                test_gen_batch_padded, pad_size = pad_no_concat_validation_batch(test_gen_batch, size_divisor)
             if not self.async_rollout_mode:
                 test_output_gen_batch_padded = self.actor_rollout_wg.generate_sequences(test_gen_batch_padded)
             else:
@@ -861,13 +907,7 @@ class RayPPOTrainer:
             if self.concat_multi_turn:
                 test_output_gen_batch = unpad_dataproto(test_output_gen_batch_padded, pad_size=pad_size)
             else:
-                # In no-concat mode, filter by uid since each input generates variable number of outputs
-                # We need to keep only outputs whose uid is in the original (pre-padding) uid set
-                valid_indices = [
-                    i for i, uid in enumerate(test_output_gen_batch_padded.non_tensor_batch["group_idx"]) # uid in test_gen become group index in test_output_gen
-                    if uid in original_uids
-                ]
-                test_output_gen_batch = test_output_gen_batch_padded.select_idxs(valid_indices)
+                test_output_gen_batch = filter_no_concat_validation_padding(test_output_gen_batch_padded)
                 # Concatenate multi-turn trajectories into single entries
                 test_output_gen_batch = concat_val_multi_turn(test_output_gen_batch, test_gen_batch,self.tokenizer)
                 # after this, we can assume no-concat mode and concat_multi_turn can be handled equally
@@ -928,6 +968,8 @@ class RayPPOTrainer:
             reward_extra_infos_dict["reward"].extend(scores)
             if "reward_extra_info" in result:
                 for key, lst in result["reward_extra_info"].items():
+                    if key == "num_turns" and "__num_turns__" in test_batch.non_tensor_batch:
+                        continue
                     reward_extra_infos_dict[key].extend(lst)
 
             # Add token_level_scores to batch for custom metrics computation
@@ -940,7 +982,14 @@ class RayPPOTrainer:
 
             # collect num_turns of each prompt
             if "__num_turns__" in test_batch.non_tensor_batch:
-                sample_turns.append(test_batch.non_tensor_batch["__num_turns__"])
+                turn_counts = np.asarray(test_batch.non_tensor_batch["__num_turns__"]).reshape(-1)
+                if len(turn_counts) != len(scores):
+                    raise ValueError(
+                        "validation num-turn count mismatch: "
+                        f"turn_counts={len(turn_counts)}, scores={len(scores)}"
+                    )
+                sample_turns.append(turn_counts)
+                reward_extra_infos_dict["num_turns"].extend(int(value) for value in turn_counts)
 
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
         

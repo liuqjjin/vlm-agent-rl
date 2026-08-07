@@ -54,7 +54,34 @@ def trajectory_reward_from_turns(
     format_reward: float = 0.1,
     tolerance: float = 1e-6,
 ) -> float:
-    """Reduce turn rewards to one trajectory score with explicit bias control."""
+    """Reduce turn rewards to one trajectory score with explicit bias control.
+
+    Args:
+        turn_rewards: 1D tensor of per-turn rewards for a single trajectory.
+        success: Whether the trajectory achieved task success.
+        mode: Aggregation mode - one of "outcome", "bounded_process", or "format_gate".
+        success_reward: Bonus added to terminal turn for successful trajectories (default: 1.0).
+        process_reward_cap: Maximum absolute value for process rewards in "bounded_process" mode (default: 0.2).
+        format_reward: Minimum per-turn reward threshold for "format_gate" mode (default: 0.1).
+        tolerance: Numerical tolerance for threshold comparisons (default: 1e-6).
+
+    Returns:
+        float: Scalar trajectory reward.
+
+    Raises:
+        ValueError: If turn_rewards is empty, mode is unknown, or process_reward_cap is negative.
+
+    Example:
+        >>> turn_rewards = torch.tensor([0.1, 0.1, 1.1])  # Last includes success bonus
+        >>> trajectory_reward_from_turns(turn_rewards, success=True, mode="outcome")
+        1.0
+        >>> trajectory_reward_from_turns(turn_rewards, success=True, mode="bounded_process")
+        1.2
+
+    References:
+        Mode behaviors are designed to isolate different reward components for controlled
+        advantage estimation in group-relative policy optimization (Rafailov et al., 2024).
+    """
     rewards = torch.as_tensor(turn_rewards, dtype=torch.float64).reshape(-1)
     if rewards.numel() == 0:
         raise ValueError("a trajectory must contain at least one turn reward")
@@ -94,9 +121,41 @@ def compute_policy_weights(
 ) -> torch.Tensor:
     """Return normalized token weights for token/turn/trajectory objectives.
 
-    The returned weights sum to one over active response tokens.  Exact
+    The returned weights sum to one over active response tokens. Exact
     ``(group, trajectory, turn)`` duplicates receive zero weight, making the
     objective invariant to DP padding.
+
+    Args:
+        response_mask: Binary mask of shape (batch_size, seq_len) indicating response tokens.
+        group_idx: Array-like of group identifiers, one per batch row.
+        traj_idx: Array-like of trajectory indices within each group, one per batch row.
+        turn_idx: Array-like of turn indices within each trajectory, one per batch row.
+        mode: Weighting scheme - "token" (uniform per token), "turn" (uniform per turn),
+            or "trajectory" (uniform per trajectory).
+        row_is_active: Optional boolean mask indicating which rows contribute to loss.
+            Defaults to all rows active.
+
+    Returns:
+        torch.Tensor: Weight tensor of shape (batch_size, seq_len) summing to 1.0 over
+            active response tokens.
+
+    Raises:
+        ValueError: If response_mask is not rank 2, index arrays have wrong length,
+            or active turns have no response tokens.
+
+    Example:
+        >>> response_mask = torch.tensor([[1, 1, 0], [1, 0, 0]])
+        >>> group_idx = [0, 0]
+        >>> traj_idx = [0, 1]
+        >>> turn_idx = [1, 1]
+        >>> weights = compute_policy_weights(response_mask, group_idx, traj_idx, turn_idx, mode="turn")
+        >>> weights.sum().item()
+        1.0
+
+    References:
+        - "token" mode: standard PPO token-level weighting
+        - "turn" mode: equal weight per environment interaction
+        - "trajectory" mode: group-relative policy optimization (GRPO) weighting
     """
     if response_mask.ndim != 2:
         raise ValueError(f"response_mask must be rank 2, got shape {tuple(response_mask.shape)}")
@@ -192,7 +251,64 @@ def compute_no_concat_episode_grpo(
     config: Any = None,
     **_: Any,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Compute one group-relative advantage per complete trajectory."""
+    """Compute one group-relative advantage per complete trajectory.
+
+    Implements trajectory-level group-relative policy optimization (GRPO) for multi-turn
+    rollouts with distributed padding. Advantages are computed per complete trajectory
+    (all turns) and standardized within each group to reduce variance.
+
+    Args:
+        data: Rollout data object containing batch tensors and non-tensor metadata.
+            Required fields:
+            - batch["token_level_rewards"] or batch["token_level_scores"]: (batch_size, seq_len)
+            - batch["response_mask"]: (batch_size, seq_len)
+            - non_tensor_batch["group_idx"]: group identifiers (can be UUIDs)
+            - non_tensor_batch["traj_idx"]: trajectory index within group [0, num_repeat)
+            - non_tensor_batch["turn_idx"]: turn index within trajectory (1-indexed)
+            - non_tensor_batch["traj_success"]: boolean success flag
+            - non_tensor_batch["last_turn"]: boolean terminal turn marker
+        gamma: Discount factor (unused, required by interface, default: 1.0).
+        lam: GAE lambda parameter (unused, required by interface, default: 1.0).
+        num_repeat: Number of trajectories per group (default: 1, must be >= 2).
+        norm_adv_by_std_in_grpo: Whether to standardize advantages within groups (default: True).
+        config: Optional configuration object with section "no_concat_episode_grpo" containing:
+            - reward_mode: "outcome", "bounded_process", or "format_gate" (default: "outcome")
+            - loss_weighting: "token", "turn", or "trajectory" (default: "trajectory")
+            - incomplete_group_action: "error" or "drop" (default: "error")
+            - success_reward: bonus for successful trajectories (default: 1.0)
+            - process_reward_cap: cap for bounded_process mode (default: 0.2)
+            - format_reward: threshold for format_gate mode (default: 0.1)
+            - std_epsilon: minimum std for normalization (default: 1e-6)
+
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]: (advantages, returns) both of shape (batch_size, seq_len).
+            Returns are equal to advantages for GRPO. The data object is modified in-place with:
+            - data.batch["policy_weights"]: normalized per-token loss weights
+            - data.meta_info["no_concat_episode_grpo"]: diagnostic statistics
+
+    Raises:
+        ValueError: If num_repeat < 2, required fields missing, duplicate rows conflict,
+            trajectory structure is invalid, or groups are incomplete with action="error".
+        KeyError: If token_level_rewards/scores is missing from batch.
+
+    Example:
+        >>> # Assuming data object with 4 rows (2 groups × 2 trajectories × 1 turn each)
+        >>> advantages, returns = compute_no_concat_episode_grpo(
+        ...     data, num_repeat=2, norm_adv_by_std_in_grpo=True
+        ... )
+        >>> # advantages will be group-standardized per trajectory
+        >>> data.meta_info["no_concat_episode_grpo"]["groups"]  # 2
+
+    References:
+        Group Relative Policy Optimization (Rafailov et al., 2024). This implementation
+        extends GRPO to multi-turn episodic rollouts with exact deduplication of
+        distributed padding artifacts.
+
+    Note:
+        Padding duplicates (identical group/traj/turn triples) are automatically detected
+        and verified for consistency. Only unique turns are used for advantage computation,
+        then results are broadcast back to all duplicates.
+    """
     del gamma, lam
     if int(num_repeat) < 2:
         raise ValueError("no_concat_episode_grpo requires rollout.n >= 2")

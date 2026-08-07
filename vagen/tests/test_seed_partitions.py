@@ -27,11 +27,11 @@ ROOT = Path(__file__).resolve().parents[2]
         ),
         (
             "examples/evaluate/sokoban/config.yaml",
-            set(range(10001, 10129)),
+            set(range(10129, 10257)),  # Updated to [10129, 10256]
         ),
         (
             "examples/evaluate/navigation/config_base.yaml",
-            set(range(30, 60)),
+            set(range(30, 60)),  # Updated to [30, 59]
         ),
     ],
 )
@@ -48,22 +48,42 @@ def test_formal_evaluation_configs_cover_exact_seed_sets(
     assert set(seeds) == expected
 
 
-def test_navigation_training_and_validation_seed_domains_do_not_overlap() -> None:
+def test_navigation_training_validation_and_test_task_domains_are_disjoint() -> None:
     train = load_envspecs(
         str(ROOT / "examples/train/navigation/train_navigation.yaml")
     ).specs[0]
     validation = load_envspecs(
         str(ROOT / "examples/train/navigation/val_navigation.yaml")
     ).specs[0]
-    train_seeds = _generate_seeds_for_spec(train, base_seed=0, spec_idx=0)
-    validation_seeds = _generate_seeds_for_spec(
-        validation, base_seed=0, spec_idx=0
+    evaluation_config = OmegaConf.to_container(
+        _load_config(
+            str(ROOT / "examples/evaluate/navigation/config_base.yaml"), []
+        ),
+        resolve=True,
     )
+    evaluation = _parse_env_specs(evaluation_config)[0]
 
-    assert len(train_seeds) == 10000
-    assert set(train_seeds) <= set(range(0, 30))
-    assert set(validation_seeds) == set(range(30, 60))
-    assert set(train_seeds).isdisjoint(validation_seeds)
+    train_seeds = _generate_seeds_for_spec(train, base_seed=0, spec_idx=0)
+    validation_seeds = _generate_seeds_for_spec(validation, base_seed=0, spec_idx=0)
+    evaluation_seeds = generate_seeds_for_spec(evaluation, base_seed=0, spec_idx=0)
+
+    assert train.config["eval_set"] == "base_train"
+    assert validation.config["eval_set"] == "base"
+    assert evaluation.config["eval_set"] == "base"
+    assert set(train_seeds) == set(range(1200))
+    assert set(validation_seeds) == set(range(30))
+    assert set(evaluation_seeds) == set(range(30, 60))
+
+    train_tasks = {(train.config["eval_set"], seed) for seed in train_seeds}
+    validation_tasks = {
+        (validation.config["eval_set"], seed) for seed in validation_seeds
+    }
+    evaluation_tasks = {
+        (evaluation.config["eval_set"], seed) for seed in evaluation_seeds
+    }
+    assert train_tasks.isdisjoint(validation_tasks)
+    assert train_tasks.isdisjoint(evaluation_tasks)
+    assert validation_tasks.isdisjoint(evaluation_tasks)
 
 
 @pytest.mark.parametrize("environment", ["frozenlake", "sokoban", "navigation"])
@@ -85,13 +105,17 @@ def test_formal_evaluation_seeds_are_held_out_from_training(
     )
     evaluation = _parse_env_specs(evaluation_config)[0]
 
-    train_seeds = set(
-        _generate_seeds_for_spec(train, base_seed=0, spec_idx=0)
-    )
-    evaluation_seeds = set(
-        generate_seeds_for_spec(evaluation, base_seed=0, spec_idx=0)
-    )
-    assert train_seeds.isdisjoint(evaluation_seeds)
+    train_domain = train.config.get("eval_set", environment)
+    evaluation_domain = evaluation.config.get("eval_set", environment)
+    train_tasks = {
+        (train_domain, seed)
+        for seed in _generate_seeds_for_spec(train, base_seed=0, spec_idx=0)
+    }
+    evaluation_tasks = {
+        (evaluation_domain, seed)
+        for seed in generate_seeds_for_spec(evaluation, base_seed=0, spec_idx=0)
+    }
+    assert train_tasks.isdisjoint(evaluation_tasks)
 
 
 def test_training_seed_list_accepts_exact_declared_count() -> None:
