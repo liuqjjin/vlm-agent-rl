@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,12 @@ from vagen.gym_agent_dataset import (
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _sokoban_board_split_seeds() -> set[int]:
+    """Sokoban's held-out tasks are enumerated, not a contiguous seed range."""
+    split = json.loads((ROOT / "experiments/sokoban_board_split.json").read_text())
+    return {int(seed) for seed in split["test"]["seeds"]}
+
+
 @pytest.mark.parametrize(
     ("relative_path", "expected"),
     [
@@ -27,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[2]
         ),
         (
             "examples/evaluate/sokoban/config.yaml",
-            set(range(10129, 10257)),  # Updated to [10129, 10256]
+            _sokoban_board_split_seeds(),
         ),
         (
             "examples/evaluate/navigation/config_base.yaml",

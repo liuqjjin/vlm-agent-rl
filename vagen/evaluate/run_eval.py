@@ -220,11 +220,11 @@ def _refresh_tag_summaries(dump_dir: Optional[str]) -> None:
 
 def _collect_completed_runs(
     dump_dir: Optional[str],
-) -> Dict[Tuple[str, int, Union[int, str], str], str]:
+) -> Dict[Tuple[str, int, Union[int, str], str, bool], str]:
     """
-    Scan completed runs keyed by (env_name, seed, tag_id, visual ablation).
+    Scan completed runs keyed by (env_name, seed, tag_id, ablation, context protocol).
     """
-    completed: Dict[Tuple[str, int, Union[int, str], str], str] = {}
+    completed: Dict[Tuple[str, int, Union[int, str], str, bool], str] = {}
     if not dump_dir or not os.path.isdir(dump_dir):
         return completed
 
@@ -270,6 +270,13 @@ def _collect_completed_runs(
                 or metrics.get("observation_ablation")
                 or "none"
             )
+            recorded_concat = (meta_payload or {}).get("concat_multi_turn")
+            if recorded_concat is None:
+                recorded_concat = metrics.get("concat_multi_turn")
+            if recorded_concat is None:
+                # Episodes written before the context protocol was recorded cannot
+                # be attributed to a protocol, so they must not satisfy a resume.
+                continue
             if env_name is None or seed is None or tag_id is None:
                 continue
             try:
@@ -281,6 +288,7 @@ def _collect_completed_runs(
                     int(seed),
                     tag_id,
                     str(observation_ablation),
+                    bool(recorded_concat),
                 )
             except (TypeError, ValueError):
                 continue
@@ -290,7 +298,7 @@ def _collect_completed_runs(
 
 def _job_resume_key(
     data: Dict[str, Any],
-) -> Optional[Tuple[str, int, Union[int, str], str]]:
+) -> Optional[Tuple[str, int, Union[int, str], str, bool]]:
     env_name = data.get("env_name")
     seed = data.get("seed")
     tag_id = data.get("tag_id")
@@ -305,6 +313,7 @@ def _job_resume_key(
             int(seed),
             tag_id,
             str(data.get("observation_ablation", "none")),
+            bool(data.get("concat_multi_turn", True)),
         )
     except (TypeError, ValueError):
         return None

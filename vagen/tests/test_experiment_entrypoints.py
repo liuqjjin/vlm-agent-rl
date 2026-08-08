@@ -271,13 +271,43 @@ def test_visual_eval_wrapper_dry_run_declares_auditable_runtime(
     assert "eval_qwen25_vl_3b.sh" in result.stdout
     expected_count = 30 if environment == "navigation" else 128
     assert f"envs.0.n_envs={expected_count}" in result.stdout
-    seed_start = {
-        "frozenlake": 10001,
-        "sokoban": 10129,
-        "navigation": 30,
-    }[environment]
-    seed_max = seed_start + expected_count - 1
-    assert f"envs.0.seed=\\[{seed_start}\\,{seed_max}\\,1\\]" in result.stdout
+    assert "envs.0.concat_multi_turn=" in result.stdout
+    if environment == "sokoban":
+        # Sokoban's held-out tasks are enumerated in the config as a
+        # board-disjoint seed_list, so the wrapper must not overwrite them
+        # with a contiguous range.
+        assert "envs.0.seed=" not in result.stdout
+        assert "envs.0.seed_list=null" not in result.stdout
+    else:
+        seed_start = {"frozenlake": 10001, "navigation": 30}[environment]
+        seed_max = seed_start + expected_count - 1
+        assert f"envs.0.seed=\\[{seed_start}\\,{seed_max}\\,1\\]" in result.stdout
+
+
+def test_explicit_seed_start_overrides_an_enumerated_split(tmp_path: Path) -> None:
+    """An explicit window must still win, and must clear the config's seed_list."""
+    env = os.environ.copy()
+    env.update(
+        {
+            "DRY_RUN": "1",
+            "ENVIRONMENT": "sokoban",
+            "SEED_START": "777",
+            "N_ENVS": "4",
+            "DUMP_DIR": str(tmp_path / "override"),
+            "PYTHON_BIN": sys.executable,
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(VISUAL_EVAL_SCRIPT)],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "envs.0.seed=\\[777\\,780\\,1\\]" in result.stdout
+    assert "envs.0.seed_list=null" in result.stdout
 
 
 def test_episode_screening_uses_nine_distinct_run_names(tmp_path: Path) -> None:

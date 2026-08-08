@@ -32,11 +32,16 @@ methods:
 environments:
   sokoban:
     train: examples/train/sokoban/train_sokoban_vision.yaml
-    train_seeds: [1, 10000]  # Training: 10000 unique seeds
+    train_seeds: [1, 10000]  # Training: 10000 requested seeds -> 3902 distinct boards
     validation: examples/train/sokoban/val_sokoban_vision.yaml
-    validation_seeds: [10001, 10128]  # Validation for checkpoint selection: 128 seeds
+    validation_seeds: [10001, 10128]  # Validation for checkpoint selection
     evaluation: examples/evaluate/sokoban/config.yaml
-    evaluation_seeds: [10129, 10256]  # Final test (post-training): 128 seeds, disjoint from train+val
+    evaluation_seeds: [20003, 20645]  # Final test: enumerated board-disjoint seed_list
+    # Requested seeds are not task identities in Sokoban: reset() advances the
+    # seed until min_solution_steps is met, so different seeds can produce the
+    # same board. This artifact fingerprints the board each seed actually
+    # generates and proves the test boards are unseen.
+    board_split: experiments/sokoban_board_split.json
   navigation:
     train: examples/train/navigation/train_navigation.yaml
     train_seeds: [0, 1199]  # Training: base_train dataset (1200 tasks)

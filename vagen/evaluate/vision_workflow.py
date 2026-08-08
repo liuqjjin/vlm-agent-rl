@@ -299,6 +299,7 @@ class GenericVisionInferenceWorkflow:
                 "infos": final_infos,
                 "env_config": env_config_dump,
                 "observation_ablation": self.observation_ablation,
+                "concat_multi_turn": self.concat_multi_turn,
             }
             metrics.setdefault("max_turns", turn_limit)
             if error_info is not None:
@@ -351,6 +352,7 @@ class GenericVisionInferenceWorkflow:
                         "infos": (infos or []) + [{"error": repr(e)}],
                         "env_config": env_config_dump,
                         "observation_ablation": self.observation_ablation,
+                        "concat_multi_turn": self.concat_multi_turn,
                         "error_details": {
                             "error": repr(e),
                             "error_type": type(e).__name__,

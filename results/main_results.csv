@@ -1,5 +1,5 @@
 Method,Visual Success,Peak VRAM,GPU·h,Mean Turns,Ratio P95,Status,Environment,Seed,Commit,Evidence
-Base Qwen2.5-VL-3B,,,,,,pending-external-gpu,Sokoban,10129:10256,,experiments/matrix.yaml
+Base Qwen2.5-VL-3B,,,,,,pending-external-gpu,Sokoban,20003:20645,,experiments/matrix.yaml
 concat GRPO,,,,,,pending-external-gpu,Sokoban,"0,1,2",,experiments/matrix.yaml
 fixed no-concat GAE,,,,,,pending-external-gpu,Sokoban,"0,1,2",,experiments/matrix.yaml
 no-concat episode GRPO,,,,,,pending-external-gpu,Sokoban,"0,1,2",,experiments/matrix.yaml

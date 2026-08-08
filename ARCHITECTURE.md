@@ -17,7 +17,7 @@ The project changes the learning semantics around VAGEN’s existing execution s
 sequenceDiagram
     participant Env as Visual environment
     participant Loop as Agent loop
-    participant Rollout as SGLang rollout
+    participant Rollout as vLLM async rollout
     participant Trainer as Ray trainer
     participant Algo as Advantage estimator
     participant Worker as Actor / critic workers

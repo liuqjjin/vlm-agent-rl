@@ -21,7 +21,7 @@ The full inherited license is retained in [`LICENSE`](LICENSE).
 - Principal source notices identify ByteDance Ltd. and/or its affiliates;
   individual files also retain notices from their respective contributors.
 
-The full license is retained at [`verl/LICENSE`](verl/LICENSE). The two local
+The full license is retained at [`verl/LICENSE`](verl/LICENSE). The three local
 submodule commits remain subject to that license and mark their new test
 files as VAGEN contributor work.
 

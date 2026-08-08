@@ -23,7 +23,22 @@
 | fixed no-concat GAE | 单个 turn | 重构后的时序 GAE | 是 | 1 | 既有路径 + 本项目 mask 修复 |
 | no-concat episode GRPO | 单个 turn | 重构后的 trajectory/group | 否 | 4 | 本项目核心算法设计 |
 
-本项目设计的是**三路受控比较**，而不是声称从零实现三种算法。上游提供分布式训练与 rollout 基础设施；本项目负责轨迹重构、稀疏监督修复、episode GRPO、策略权重、一致性门控和实验审计扩展。
+本项目比较的是**三条完整 recipe**，不是只隔离一个变量的严格消融。上游提供分布式训练与 rollout 基础设施；本项目负责轨迹重构、稀疏监督修复、episode GRPO、策略权重、一致性门控和实验审计扩展。
+
+### 2.1 已知的共变量
+
+下面几项在三条 recipe 之间同时变化。它们不影响每条 recipe 自身的正确性，但决定了结论的措辞：可以说“这条 recipe 整体更好”，不能说“差异只来自信用分配方式”。
+
+| 共变量 | 差异 | 位置 |
+|---|---|---|
+| 每个 global step 的 optimizer step 数 | mini-batch 按 `rollout.n` 放大后逐个执行 optimizer step；no-concat 把一条轨迹展开成多行，每步的 Adam 更新次数随平均回合数增加 | `verl/workers/fsdp_workers.py`、`verl/workers/actor/dp_actor.py` |
+| 奖励目标 | concat GRPO 用逐 token 奖励求和；no-concat GAE 用逐 turn shaping reward；episode GRPO 默认 `outcome` 只看成败 | `vagen/custom_advantage/` |
+| 组内标准差口径 | episode GRPO 用 population std（`unbiased=False`），上游 concat GRPO 用样本 std；`rollout.n=4` 时优势尺度相差约 15.5% | `no_concat_episode_grpo.py`、`verl/trainer/ppo/core_algos.py` |
+| 每回合响应预算 | no-concat 固定 512 token；concat 为 4000（Sokoban）/ 10000（Navigation） | `scripts/run_training_method.sh` |
+
+`policy_weights` 保证的是同一个 optimizer step 内、跨 micro-batch 切分的等价性，不消除上表第一行的差异。
+
+报告结果时至少同时给出 global steps、optimizer steps、environment trajectories 和 generated action tokens 四种口径，读者才能判断计算量是否可比。若要把差异归因到单一机制，需要先统一每个 global step 的 optimizer step 数、奖励定义和标准差口径，再单独跑一次因果消融。
 
 episode GRPO screening 覆盖：
 
@@ -38,13 +53,24 @@ loss_weighting ∈ {token, turn, trajectory}
 
 ### 3.1 Sokoban
 
-| 用途 | 配置 | Seeds | 数量 |
-|---|---|---:|---:|
-| Train | `examples/train/sokoban/train_sokoban_vision.yaml` | `[1, 10000]` | 10,000 |
-| Validation | `examples/train/sokoban/val_sokoban_vision.yaml` | `[10001, 10128]` | 128 |
-| Final test | `examples/evaluate/sokoban/config.yaml` | `[10129, 10256]` | 128 |
+Sokoban 的 seed **不是**任务身份。`PatchedSokobanEnv.reset` 会在生成的房间不满足 `min_solution_steps` 时继续换 seed 重试，因此不同的 requested seed 可能收敛到同一个棋盘：10,000 个训练 seed 只产生 3,902 个不同棋盘。仅按 seed 区间划分会让大量测试棋盘在训练中出现过。
 
-三个区间按闭区间记法完全互斥。Validation 用于训练中选择 checkpoint；final test 只能在 checkpoint 选择完成后运行。
+正式划分因此按**生成后的棋盘**进行。[`vagen/analysis/sokoban_board_split.py`](vagen/analysis/sokoban_board_split.py) 对每个 requested seed 实际生成的 `(room_fixed, room_state)` 取指纹，并挑出与 train、validation 都不重合、且彼此互不相同的测试 seed；结果提交在 [`experiments/sokoban_board_split.json`](experiments/sokoban_board_split.json)，评测配置直接引用其 `seed_list`。
+
+| 用途 | 配置 | Requested seeds | Episode 数 | 不同棋盘 |
+|---|---|---|---:|---:|
+| Train | `examples/train/sokoban/train_sokoban_vision.yaml` | `[1, 10000]` | 10,000 | 3,902 |
+| Validation | `examples/train/sokoban/val_sokoban_vision.yaml` | `[10001, 10128]` | 128 | 124 |
+| Final test | `examples/evaluate/sokoban/config.yaml` | 枚举 `seed_list`（`20003`–`20645`） | 128 | 128 |
+
+测试集的 128 个棋盘互不相同，且都不在 train/validation 的棋盘集合中。三份配置使用同一个 `min_solution_steps: [1,5]` 难度窗口，因此 held-out 的差异是棋盘身份，不是题目难度。
+
+重新生成与校验：
+
+```bash
+python -m vagen.analysis.sokoban_board_split build --output experiments/sokoban_board_split.json
+python -m vagen.analysis.sokoban_board_split verify --split experiments/sokoban_board_split.json --sample 8
+```
 
 ### 3.2 Navigation
 
@@ -72,6 +98,8 @@ Confirmatory training seeds 固定为 `{0,1,2}`。它们控制 Python hash 和�
 - reward-variance filter 关闭；
 - rollout/train parity gate 开启；
 - concat/no-concat、critic 和 `rollout.n` 与方法定义一致；
+- **评测的上下文协议必须与训练一致**：no-concat 训练出的 checkpoint 只能在 no-concat 协议下评测，concat 与 base 用完整历史。该值由 `EVAL_METHOD` 推出、写入 evaluation manifest、参与 resume 身份；聚合器在训练与评测的 `concat_multi_turn` 不一致时拒绝发布该结果；
+- Sokoban 的 final test 使用 `experiments/sokoban_board_split.json` 校验过的棋盘级划分；
 - episode GRPO 使用单 GPU；
 - 工作树干净，顶层与 verl commit 均写入 manifest；
 - Qwen3-VL 在 processor、M-RoPE position ID 与 parity 验证前 fail-closed；
@@ -162,12 +190,16 @@ CONFIRMATORY_SEEDS=0,1,2 \
 每个环境使用该环境自己的 selected checkpoint：
 
 ```bash
+EVAL_METHOD=no_concat_episode_grpo \
 EVAL_ENVIRONMENT=sokoban EVAL_MODEL_PATH=/absolute/path/to/sokoban_hf_checkpoint \
   bash scripts/run_experiment_matrix.sh anti-cheat
 
+EVAL_METHOD=no_concat_episode_grpo \
 EVAL_ENVIRONMENT=navigation EVAL_MODEL_PATH=/absolute/path/to/navigation_hf_checkpoint \
   bash scripts/run_experiment_matrix.sh anti-cheat
 ```
+
+`EVAL_METHOD` 是必填项：它决定该 checkpoint 用哪种上下文协议评测，缺省会直接报错而不是悄悄退回完整历史。
 
 三个条件为：
 

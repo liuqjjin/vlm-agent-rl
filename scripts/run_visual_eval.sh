@@ -41,21 +41,57 @@ case "${EVALUATION_ROLE}" in
     ;;
 esac
 
+# A policy must be evaluated under the context protocol it was trained with:
+# a no-concat policy sees only the system prompt plus the current observation,
+# while concat GRPO and the untrained base model see the accumulated history.
+# EVAL_METHOD names the training recipe, so it decides the protocol.
+case "${EVAL_METHOD:-base}" in
+  no_concat_gae|no_concat_episode_grpo)
+    DEFAULT_CONCAT_MULTI_TURN=false
+    ;;
+  base|concat_grpo|selected_checkpoint)
+    DEFAULT_CONCAT_MULTI_TURN=true
+    ;;
+  *)
+    echo "[ERROR] EVAL_METHOD must be base, concat_grpo, no_concat_gae, no_concat_episode_grpo, or selected_checkpoint." >&2
+    exit 1
+    ;;
+esac
+CONCAT_MULTI_TURN="${CONCAT_MULTI_TURN:-${DEFAULT_CONCAT_MULTI_TURN}}"
+case "${CONCAT_MULTI_TURN}" in
+  true|false) ;;
+  *)
+    echo "[ERROR] CONCAT_MULTI_TURN must be true or false." >&2
+    exit 1
+    ;;
+esac
+if [[ "${EVALUATION_ROLE}" == "final_test" && "${CONCAT_MULTI_TURN}" != "${DEFAULT_CONCAT_MULTI_TURN}" ]]; then
+  echo "[ERROR] final_test cannot override the context protocol implied by EVAL_METHOD=${EVAL_METHOD:-base}." >&2
+  exit 2
+fi
+
+EXPLICIT_SEED_START="${SEED_START:-}"
+
 case "${ENVIRONMENT}" in
   sokoban)
     EVAL_SCRIPT="${ROOT_DIR}/examples/evaluate/sokoban/sglang/eval_qwen25_vl_3b.sh"
-    DEFAULT_SEED_START=10129  # Sokoban test: [10129, 10256], disjoint from train+val
+    # Sokoban's held-out seeds are enumerated in the config as a board-disjoint
+    # seed_list, so a contiguous range is not the authority here.
+    DEFAULT_SEED_START=20003
     DEFAULT_N_ENVS=128
+    CONFIG_DECLARES_SEED_LIST=1
     ;;
   navigation)
     EVAL_SCRIPT="${ROOT_DIR}/examples/evaluate/navigation/sglang/eval_qwen25_vl_3b.sh"
     DEFAULT_SEED_START=30  # Navigation test: base 30-59
     DEFAULT_N_ENVS=30
+    CONFIG_DECLARES_SEED_LIST=0
     ;;
   frozenlake)
     EVAL_SCRIPT="${ROOT_DIR}/examples/evaluate/frozenlake/sglang/eval_qwen25_vl_3b.sh"
     DEFAULT_SEED_START=10001
     DEFAULT_N_ENVS=128
+    CONFIG_DECLARES_SEED_LIST=0
     ;;
   *)
     echo "[ERROR] ENVIRONMENT must be frozenlake, sokoban, or navigation." >&2
@@ -88,6 +124,13 @@ fi
 EXPECTED_GPU_COUNT=$((DP_SIZE_VALUE * TP_SIZE_VALUE))
 SEED_END_EXCLUSIVE=$((SEED_START + N_ENVS))
 SEED_MAX=$((SEED_END_EXCLUSIVE - 1))
+# Which artifact defines the evaluated task identities.  "board_split" means the
+# config's enumerated seed_list is authoritative; "range" means this script
+# passes an explicit contiguous window.
+SEED_SOURCE=range
+if [[ "${CONFIG_DECLARES_SEED_LIST}" == "1" && -z "${EXPLICIT_SEED_START}" ]]; then
+  SEED_SOURCE=board_split
+fi
 TAG="${TAG:-${ENVIRONMENT}_${OBSERVATION_ABLATION}}"
 DUMP_DIR="${DUMP_DIR:-${ROOT_DIR}/exps/eval/${MODEL_PATH//\//_}/${TAG}}"
 METRICS_DIR="${DUMP_DIR}/gpu_metrics"
@@ -98,12 +141,16 @@ CONFIG_CHECK_OUTPUT="${DUMP_DIR}/resolved_config.txt"
 COMMAND=(
   bash "${EVAL_SCRIPT}"
   "envs.0.n_envs=${N_ENVS}"
-  "envs.0.seed=[${SEED_START},${SEED_MAX},1]"
   "envs.0.tag_id=${TAG}"
   "envs.0.observation_ablation=${OBSERVATION_ABLATION}"
+  "envs.0.concat_multi_turn=${CONCAT_MULTI_TURN}"
   "run.max_concurrent_jobs=${MAX_CONCURRENT_JOBS}"
   "run.resume=skip_completed"
 )
+if [[ "${SEED_SOURCE}" == "range" ]]; then
+  # Explicit seed window; overrides any seed_list declared by the config.
+  COMMAND+=("envs.0.seed=[${SEED_START},${SEED_MAX},1]" "envs.0.seed_list=null")
+fi
 
 GIT_DIRTY=False
 if [[ -n "$(git -C "${ROOT_DIR}" status --porcelain)" ]]; then
@@ -141,6 +188,8 @@ write_manifest() {
 EVAL_ENVIRONMENT="${ENVIRONMENT}" \
 EVAL_MODEL_PATH="${MODEL_PATH}" \
 EVAL_ABLATION="${OBSERVATION_ABLATION}" \
+EVAL_CONCAT_MULTI_TURN="${CONCAT_MULTI_TURN}" \
+EVAL_SEED_SOURCE="${SEED_SOURCE}" \
 EVAL_ROLE="${EVALUATION_ROLE}" \
 EVAL_SEED_START="${SEED_START}" \
 EVAL_SEED_END_EXCLUSIVE="${SEED_END_EXCLUSIVE}" \
@@ -182,6 +231,8 @@ manifest = {
     "memory_fraction": float(os.environ["EVAL_MEM_FRACTION"]),
     "n_envs": int(os.environ["EVAL_N_ENVS"]),
     "observation_ablation": os.environ["EVAL_ABLATION"],
+    "concat_multi_turn": os.environ["EVAL_CONCAT_MULTI_TURN"].lower() == "true",
+    "seed_source": os.environ["EVAL_SEED_SOURCE"],
     "evaluation_role": os.environ["EVAL_ROLE"],
     "seed_start": int(os.environ["EVAL_SEED_START"]),
     "seed_end_exclusive": int(os.environ["EVAL_SEED_END_EXCLUSIVE"]),

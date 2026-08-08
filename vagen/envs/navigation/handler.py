@@ -227,13 +227,40 @@ class NavigationHandler(BaseGymHandler):
 
         result_data = {"session_id": session_id}
         if seed is not None:
-            obs, info = await self._sessions[session_id].env.reset(seed)
+            try:
+                obs, info = await self._sessions[session_id].env.reset(seed)
+            except BaseException:
+                # The session and its active count are already registered, so a
+                # failed reset would otherwise hold capacity until the idle
+                # sweep runs. Return the env to the cache exactly as a normal
+                # close does, which keeps the slot accounting balanced whether
+                # the env was newly created or reused.
+                self._release_session_to_cache(session_id)
+                raise
             result_data["obs"] = obs.get("obs_str", "")
             result_data["info"] = info
             images = self._extract_images(obs)
             return HandlerResult(data=result_data, images=images)
 
         return HandlerResult(data=result_data)
+
+    def _release_session_to_cache(self, session_id: str) -> None:
+        """Undo a registered session without leaking its env slot."""
+        ctx = self._sessions.pop(session_id, None)
+        if ctx is None:
+            return
+        env = ctx.env
+        try:
+            device = env.cfg.gpu_device
+        except Exception:
+            return
+        self._active[device] = max(0, self._active[device] - 1)
+        scene = env._episode_data["scene"] if env._episode_data else ""
+        self._cache[device].append((scene, env))
+        LOGGER.warning(
+            f"[NavHandler] Session {session_id[:8]} released after a failed reset "
+            f"GPU {device} ({self._stats_str()})"
+        )
 
     # ------------------------------------------------------------------
     # Close (cache instead of destroy)

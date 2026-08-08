@@ -45,6 +45,16 @@ def _seed_range(value: Any, *, path: Path) -> tuple[int, int, int]:
     return start, end, repeat
 
 
+def _seed_list(value: Any, *, path: Path) -> list[int]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{path} seed_list must be a non-empty list")
+    if not all(isinstance(item, int) and not isinstance(item, bool) for item in value):
+        raise ValueError(f"{path} seed_list entries must be integers")
+    if len(set(value)) != len(value):
+        raise ValueError(f"{path} seed_list contains duplicate seeds")
+    return [int(item) for item in value]
+
+
 def _identity(environment: dict[str, Any], seed: int) -> tuple[str, int]:
     config = environment.get("config")
     config = config if isinstance(config, dict) else {}
@@ -52,6 +62,68 @@ def _identity(environment: dict[str, Any], seed: int) -> tuple[str, int]:
     if task_set is None:
         task_set = environment.get("data_source", environment.get("name", "unknown"))
     return str(task_set), seed
+
+
+def _validate_board_split(
+    specification: dict[str, Any],
+    environments: dict[str, Any],
+    repo_root: Path,
+    environment_name: str,
+) -> list[str]:
+    """Check the committed board-level split when an environment declares one.
+
+    Seed ranges only bound task identity when the environment maps a requested
+    seed onto exactly one task.  Sokoban does not: ``reset`` advances the seed
+    until the difficulty window is met, so distinct requested seeds can produce
+    the same board.  Environments that declare ``board_split`` must therefore
+    carry an artifact proving the evaluation boards are unseen.
+    """
+    del environments
+    relative_path = specification.get("board_split")
+    if relative_path is None:
+        return []
+    if not isinstance(relative_path, str):
+        return [f"{environment_name}.board_split must be a path string"]
+
+    path = (repo_root / relative_path).resolve()
+    try:
+        path.relative_to(repo_root)
+    except ValueError:
+        return [f"{environment_name}.board_split escapes repository root"]
+    if not path.is_file():
+        return [f"{environment_name}.board_split does not exist: {path}"]
+
+    from vagen.analysis.sokoban_board_split import check_split_consistency, load_split
+
+    try:
+        split = load_split(path)
+    except ValueError as error:
+        return [f"{environment_name}.board_split is unreadable: {error}"]
+
+    problems = [
+        f"{environment_name}.board_split: {problem}"
+        for problem in check_split_consistency(split)
+    ]
+
+    evaluation_relative = specification.get("evaluation")
+    if isinstance(evaluation_relative, str):
+        evaluation_path = (repo_root / evaluation_relative).resolve()
+        if evaluation_path.is_file():
+            try:
+                evaluation_environment = _first_environment(evaluation_path)
+                declared = _seed_list(
+                    evaluation_environment.get("seed_list"), path=evaluation_path
+                )
+            except ValueError as error:
+                problems.append(f"{environment_name}.board_split: {error}")
+            else:
+                expected = [int(seed) for seed in split["test"]["seeds"]]
+                if declared != expected:
+                    problems.append(
+                        f"{environment_name} evaluation seed_list does not match "
+                        f"{relative_path} test seeds"
+                    )
+    return problems
 
 
 def validate_experiment_contract(
@@ -125,41 +197,72 @@ def validate_experiment_contract(
                 continue
             try:
                 environment = _first_environment(path)
-                start, end, repeat = _seed_range(environment.get("seed"), path=path)
             except ValueError as error:
                 errors.append(str(error))
                 continue
-            if declared_range != [start, end]:
-                errors.append(
-                    f"{environment_name}.{seed_key}={declared_range!r} does not match "
-                    f"{relative_path} seed range [{start}, {end}]"
-                )
-            expected_count = end - start + 1
+
+            # An evaluation split may enumerate its task seeds explicitly, which is
+            # required whenever seed ranges are not a faithful proxy for task
+            # identity (see the Sokoban board split).
+            explicit_seeds: list[int] | None = None
+            if role == "evaluation" and environment.get("seed_list") is not None:
+                try:
+                    explicit_seeds = _seed_list(environment.get("seed_list"), path=path)
+                except ValueError as error:
+                    errors.append(str(error))
+                    continue
+
+            if explicit_seeds is not None:
+                start, end = min(explicit_seeds), max(explicit_seeds)
+                seeds = explicit_seeds
+                if declared_range not in (None, [start, end]):
+                    errors.append(
+                        f"{environment_name}.{seed_key}={declared_range!r} does not span "
+                        f"{relative_path} seed_list bounds [{start}, {end}]"
+                    )
+                expected_count = len(explicit_seeds)
+            else:
+                try:
+                    start, end, repeat = _seed_range(environment.get("seed"), path=path)
+                except ValueError as error:
+                    errors.append(str(error))
+                    continue
+                seeds = list(range(start, end + 1))
+                if declared_range != [start, end]:
+                    errors.append(
+                        f"{environment_name}.{seed_key}={declared_range!r} does not match "
+                        f"{relative_path} seed range [{start}, {end}]"
+                    )
+                expected_count = end - start + 1
+                if role in {"train", "validation"} and repeat != 1:
+                    errors.append(
+                        f"{relative_path} must set seed repeat=1 for unique task coverage"
+                    )
+                if role == "evaluation" and repeat not in {0, 1}:
+                    errors.append(
+                        f"{relative_path} has invalid evaluation seed repeat={repeat}"
+                    )
             n_envs = environment.get("n_envs")
             if n_envs != expected_count:
                 errors.append(
                     f"{relative_path} n_envs={n_envs!r}, expected {expected_count}"
                 )
-            if role in {"train", "validation"} and repeat != 1:
-                errors.append(
-                    f"{relative_path} must set seed repeat=1 for unique task coverage"
-                )
-            if role == "evaluation" and repeat not in {0, 1}:
-                errors.append(f"{relative_path} has invalid evaluation seed repeat={repeat}")
-            identities[role] = {
-                _identity(environment, seed) for seed in range(start, end + 1)
-            }
+            identities[role] = {_identity(environment, seed) for seed in seeds}
             checked.append(
                 {
                     "environment": environment_name,
                     "role": role,
                     "config": str(path),
-                    "task_set": _identity(environment, start)[0],
+                    "task_set": _identity(environment, seeds[0])[0],
                     "seed_start": start,
                     "seed_end": end,
                     "n_envs": n_envs,
+                    "seed_selection": "explicit_list" if explicit_seeds else "range",
                 }
             )
+        errors.extend(
+            _validate_board_split(specification, environments, repo_root, environment_name)
+        )
         roles = list(identities)
         for index, left in enumerate(roles):
             for right in roles[index + 1 :]:

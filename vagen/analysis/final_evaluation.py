@@ -414,6 +414,11 @@ def _final_test_record(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, An
         )
     if manifest.get("observation_ablation") != "none":
         raise ValueError(f"final result cannot use an observation ablation: {run_dir}")
+    if "concat_multi_turn" not in manifest:
+        raise ValueError(
+            f"final-test manifest does not record concat_multi_turn: {run_dir}. "
+            "A result whose evaluation context protocol is unknown cannot be published."
+        )
 
     linkage_issues: list[str] = []
     required = (
@@ -476,6 +481,19 @@ def _final_test_record(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, An
                     linkage_issues.append(
                         f"evaluation/training linkage mismatch for {evaluation_field}"
                     )
+            # A no-concat policy evaluated with the full history (or the reverse)
+            # measures a different deployment than the one that was trained, so the
+            # aggregate would not describe the method under test.
+            training_context = source_manifest.get("concat_multi_turn")
+            evaluation_context = manifest.get("concat_multi_turn")
+            if training_context is None:
+                linkage_issues.append("training manifest does not record concat_multi_turn")
+            elif bool(training_context) != bool(evaluation_context):
+                linkage_issues.append(
+                    "evaluation context protocol does not match training: "
+                    f"trained concat_multi_turn={bool(training_context)}, "
+                    f"evaluated concat_multi_turn={bool(evaluation_context)}"
+                )
             source_row = build_result_row(source_run)
             if source_row["Status"] != "complete":
                 linkage_issues.append(
@@ -533,6 +551,9 @@ def _final_test_record(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, An
             "mean_abs_logprob_delta"
         ),
         "Parity Gate Passed": source_parity_gate,
+        "Context Protocol": (
+            "concat" if manifest.get("concat_multi_turn") else "no-concat"
+        ),
         "Evaluation Peak VRAM": base_row.get("Peak VRAM"),
         "Evaluation GPU·h": base_row.get("GPU·h"),
         "Evaluation Role": FINAL_TEST_ROLE,
@@ -871,6 +892,7 @@ def aggregate_final_tests(
         "Ratio P99",
         "Mean Abs Logprob Delta",
         "Parity Gate Passed",
+        "Context Protocol",
         "Integrity Issues",
     ]
     aggregate_fields = [

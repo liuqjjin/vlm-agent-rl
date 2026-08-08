@@ -80,7 +80,8 @@ def trajectory_reward_from_turns(
 
     References:
         Mode behaviors are designed to isolate different reward components for controlled
-        advantage estimation in group-relative policy optimization (Rafailov et al., 2024).
+        advantage estimation in group-relative policy optimization (Shao et al., 2024,
+        DeepSeekMath, https://arxiv.org/abs/2402.03300).
     """
     rewards = torch.as_tensor(turn_rewards, dtype=torch.float64).reshape(-1)
     if rewards.numel() == 0:
@@ -300,7 +301,8 @@ def compute_no_concat_episode_grpo(
         >>> data.meta_info["no_concat_episode_grpo"]["groups"]  # 2
 
     References:
-        Group Relative Policy Optimization (Rafailov et al., 2024). This implementation
+        Group Relative Policy Optimization (Shao et al., 2024, DeepSeekMath,
+        https://arxiv.org/abs/2402.03300). This implementation
         extends GRPO to multi-turn episodic rollouts with exact deduplication of
         distributed padding artifacts.
 

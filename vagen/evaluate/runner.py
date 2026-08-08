@@ -99,6 +99,7 @@ async def run_eval_parallel(
             "split": data.get("split"),
             "env_name": data.get("env_name"),
             "observation_ablation": data.get("observation_ablation", "none"),
+            "concat_multi_turn": data.get("concat_multi_turn", True),
         }
         episode_metadata = {k: v for k, v in episode_metadata.items() if v is not None}
         episode_metadata["max_turns"] = turn_limit_int

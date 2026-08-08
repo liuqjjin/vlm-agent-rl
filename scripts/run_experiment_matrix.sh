@@ -350,11 +350,15 @@ PY
       echo "[ERROR] Set EVAL_ENVIRONMENT to the checkpoint's training environment." >&2
       exit 2
     fi
+    if [[ -z "${EVAL_METHOD:-}" ]]; then
+      echo "[ERROR] Set EVAL_METHOD to the checkpoint's training method; it decides the evaluation context protocol." >&2
+      exit 2
+    fi
     model_run_name="$(basename "$(dirname "${EVAL_MODEL_PATH}")")"
     anti_cheat_root="${ANTI_CHEAT_ROOT:-${ROOT_DIR}/exps/eval/anti_cheat/${model_run_name}}"
     for ablation in none remove shuffle_tiles; do
       EVALUATION_ROLE=anti_cheat \
-      EVAL_METHOD="${EVAL_METHOD:-selected_checkpoint}" \
+      EVAL_METHOD="${EVAL_METHOD}" \
       MODEL_PATH="${EVAL_MODEL_PATH}" \
       DUMP_DIR="${anti_cheat_root}/${EVAL_ENVIRONMENT}_${ablation}" \
         run_eval "${EVAL_ENVIRONMENT}" "${ablation}"

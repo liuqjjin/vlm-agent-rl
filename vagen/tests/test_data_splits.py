@@ -28,7 +28,13 @@ def test_matrix_split_declarations_match_runtime_configs(environment: str) -> No
 
     assert list(train.seed[:2]) == list(declaration.train_seeds)
     assert list(validation.seed[:2]) == list(declaration.validation_seeds)
-    assert list(evaluation.seed[:2]) == list(declaration.evaluation_seeds)
+    if evaluation.seed_list:
+        # Environments whose requested seed is not a task identity enumerate
+        # their held-out tasks; the matrix then declares the enumerated bounds.
+        evaluation_bounds = [min(evaluation.seed_list), max(evaluation.seed_list)]
+    else:
+        evaluation_bounds = list(evaluation.seed[:2])
+    assert evaluation_bounds == list(declaration.evaluation_seeds)
 
 
 def test_navigation_split_identity_includes_dataset_domain() -> None:

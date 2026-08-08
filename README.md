@@ -53,15 +53,7 @@ flowchart LR
 
 no-concat 的每一行由 `(group_idx, traj_idx, turn_idx)` 唯一标识，另外携带 `last_turn`、`traj_success` 和 `state_anchor`。这些字段由 agent loop 在环境交互时写入（[`vagen/agent_loop/gym_agent_loop_no_concat.py`](vagen/agent_loop/gym_agent_loop_no_concat.py)），由 trainer 透传过 padding 与日志，估计器只消费不重新解释。
 
-[`compute_no_concat_episode_grpo`](vagen/custom_advantage/no_concat_episode_grpo.py) 在计算任何统计量之前先做完整性检查：
-
-1. 相同 `(group, traj, turn)` 的行视为 padding 副本，只保留第一行；副本必须在 reward、response mask、成功标记、终止标记以及 `responses` / `input_ids` / `attention_mask` / `position_ids` / `rollout_log_probs` 上完全一致，否则报错；
-2. 每条轨迹的 `turn_idx` 必须从 1 开始连续；
-3. 每条轨迹恰好一个终止标记，且落在最后一个回合；
-4. 每个 group 的 `traj_idx` 必须恰好是 `range(rollout.n)`；
-5. 不满足以上条件的 group 按 `incomplete_group_action` 处理，默认 `error`，可切换为 `drop`。
-
-只有通过检查的轨迹才进入奖励归约与组内统计。
+[`compute_no_concat_episode_grpo`](vagen/custom_advantage/no_concat_episode_grpo.py) 在计算任何统计量之前先做完整性检查：相同 `(group, traj, turn)` 的行视为 padding 副本，只保留第一行且副本内容必须完全一致；每条轨迹的 `turn_idx` 从 1 开始连续，且恰好一个终止标记落在最后一个回合；每个 group 的 `traj_idx` 必须恰好是 `range(rollout.n)`。不满足的 group 按 `incomplete_group_action` 处理，默认直接报错，可切换为 `drop`。只有通过检查的轨迹才进入奖励归约与组内统计。
 
 ### 轨迹奖励归约
 
@@ -100,60 +92,49 @@ no-concat GAE 每个回合只在一个 token 位置写入 value 目标，其余�
 
 ### rollout / train 概率一致性门控
 
-首次参数更新之前，训练侧重算 `old_log_probs` 并与 rollout 引擎返回的 `rollout_log_probs` 在有效 action token 上比较（[`vagen/utils/logprob_parity.py`](vagen/utils/logprob_parity.py)）：
+首次参数更新之前，训练侧重算 `old_log_probs` 并与 rollout 引擎返回的 `rollout_log_probs` 在有效 action token 上比较（[`vagen/utils/logprob_parity.py`](vagen/utils/logprob_parity.py)）：`ratio = exp(log p_train - log p_rollout)`。报告 ratio 的 mean / median / P95 / P99、平均绝对 log-prob 偏差、pre-update clip fraction 和 token 数；no-concat 模式下先按 `(group, traj, turn)` 把 padding 副本的 mask 置零，避免复制行改变 token 分布。
 
-```text
-ratio = exp(log p_train - log p_rollout)
-```
-
-报告 ratio 的 mean / median / P95 / P99、平均绝对 log-prob 偏差、pre-update clip fraction 和 token 数。no-concat 模式下先按 `(group, traj, turn)` 把 padding 副本的 mask 置零，避免复制行改变 token 分布。默认硬阈值：
-
-```text
-|ratio_p95 - 1.0| <= 0.10
-|ratio_p99 - 1.0| <= 0.20
-mean_abs_logprob_delta <= 0.05
-pre_update_clip_fraction <= 0.01
-```
-
-失败时先把包含失败原因的 attempt 追加写入 `parity.json`，再抛出异常终止训练。这道门控针对的是 processor、chat template、截断、图像 token 和 M-RoPE position ID 层面的不一致——这些问题会在学习开始之前就让 PPO 系目标的比值假设失效。同样的理由下，Qwen3-VL 在其 processor 与 position ID 路径通过 parity 之前被训练入口显式拒绝。
+默认阈值为 `|P95−1| ≤ 0.10`、`|P99−1| ≤ 0.20`、平均绝对 log-prob 偏差 `≤ 0.05`、clip fraction `≤ 0.01`。失败时先把包含失败原因的 attempt 追加写入 `parity.json`，再抛出异常终止训练。这道门控针对的是 processor、chat template、截断、图像 token 和 M-RoPE position ID 层面的不一致——这些问题会在学习开始之前就让 PPO 系目标的比值假设失效。同样的理由下，Qwen3-VL 在其 processor 与 position ID 路径通过 parity 之前被训练入口显式拒绝。
 
 ### 视觉依赖评测
 
-评测侧提供三种确定性的观测条件（[`vagen/evaluate/observation_ablation.py`](vagen/evaluate/observation_ablation.py)）：
+评测侧提供三种确定性的观测条件（[`vagen/evaluate/observation_ablation.py`](vagen/evaluate/observation_ablation.py)）：`none` 是正常视觉输入，`remove` 不向模型发送图像，`shuffle_tiles` 做 5×5 等分块的空间打乱（permutation 由 `(seed, turn, image_index)` 的 blake2s 摘要决定，保持图像尺寸和像素集合不变）。
 
-- `none`：正常视觉输入；
-- `remove`：不向模型发送图像；
-- `shuffle_tiles`：5×5 等分块的空间打乱，permutation 由 `(seed, turn, image_index)` 的 blake2s 摘要决定，保持图像尺寸和像素集合不变。
-
-三个条件使用完全相同的任务、解码设置和 checkpoint。`none` 明显高于 `remove` 说明当前图像对决策有贡献，`none` 高于 `shuffle_tiles` 说明模型对空间布局敏感；块打乱不等价于跨 episode 的图像置换。
+三个条件使用完全相同的任务、解码设置和 checkpoint。`none` 明显高于 `remove` 说明当前图像对决策有贡献，`none` 高于 `shuffle_tiles` 说明模型对空间布局敏感。这两项控制不排除提示模板或任务先验的影响，块打乱也不等价于跨 episode 的图像置换。
 
 ## 主要实验结果
 
 ### 设置
 
-| 环境 | 训练 | Validation | Final test | 单 episode 回合上限 |
+Sokoban 的 requested seed 不是任务身份：`reset` 会在生成的房间不满足难度窗口时换 seed 重试，10,000 个训练 seed 只产生 3,902 个不同棋盘。因此 held-out 划分按**生成后的棋盘**做——[`vagen/analysis/sokoban_board_split.py`](vagen/analysis/sokoban_board_split.py) 对每个 seed 实际生成的 `(room_fixed, room_state)` 取指纹，挑出与训练、验证都不重合的测试棋盘，结果提交在 [`experiments/sokoban_board_split.json`](experiments/sokoban_board_split.json)。
+
+| 环境 | 训练 | Validation | Final test | 回合上限 |
 |---|---|---|---|:--:|
-| Sokoban | seeds `[1, 10000]` | seeds `[10001, 10128]` | seeds `[10129, 10256]` | 5 |
+| Sokoban | 10,000 seeds / 3,902 棋盘 | 128 seeds / 124 棋盘 | 128 seeds / 128 棋盘，全部未见 | 5 |
 | Navigation | `base_train` tasks `[0, 1199]` | `base` tasks `[0, 29]` | `base` tasks `[30, 59]` | 10 |
 
-三个区间互斥；Navigation 的 `base_train` 与 `base` 使用互斥的 AI2-THOR 场景集合，因此 final test 面向未见场景。checkpoint 只用 validation 指标选择，选定之后每个冻结 checkpoint 在 final test 上评测一次。
+Navigation 的 `base_train` 与 `base` 使用互斥的 AI2-THOR 场景集合。三份 Sokoban 配置共用同一个 `min_solution_steps: [1,5]` 难度窗口，因此测试集与训练集的差异是棋盘身份而不是题目难度。checkpoint 只用 validation 指标选择，选定后每个冻结 checkpoint 在 final test 上评测一次。
 
-训练配置：LoRA rank 32 / alpha 32 / `all-linear`，actor 学习率 `1e-6`，critic 学习率 `1e-5`（仅 GAE），关闭 KL 项与 entropy bonus，关闭 reward-variance filter，FSDP 参数与优化器 offload，梯度检查点，单卡，401 updates，训练 seeds `{0, 1, 2}`。no-concat 每回合响应预算 512 token；concat 需要 4000（Sokoban）/ 10000（Navigation）。
+评测的上下文协议跟随训练：no-concat 训练出的 checkpoint 只看系统提示与当前观测，concat 与基础模型看完整历史。该值由方法推出、写进 evaluation manifest、参与 resume 身份，聚合器在训练与评测协议不一致时拒绝发布结果。
+
+训练配置：LoRA rank 32 / alpha 32 / `all-linear`，actor 学习率 `1e-6`，critic 学习率 `1e-5`（仅 GAE），关闭 KL 项与 entropy bonus，关闭 reward-variance filter，FSDP 参数与优化器 offload，梯度检查点，单卡，401 updates，训练 seeds `{0, 1, 2}`。episode GRPO 使用 `reward_mode=outcome`、`loss_weighting=trajectory`。no-concat 每回合响应预算 512 token；concat 为 4000（Sokoban）/ 10000（Navigation）。
 
 ### 结果
 
-成功率是三个训练 seed 的 checkpoint 在同一 held-out 集合上的聚合值，Sokoban 每个 checkpoint 128 个 episode、Navigation 30 个；平均回合只统计成功的 episode，峰值显存取单卡训练过程中的最大值（Base 行为推理占用）。
+成功率是三个训练 seed 的 checkpoint 在同一 held-out 集合上的聚合值，Sokoban 每个 checkpoint 128 个 episode、Navigation 30 个；平均回合只统计成功的 episode。峰值显存取单卡训练过程中的最大值，Base 行是推理占用，与训练行不可直接横向比较。
 
 | 方法 | Sokoban 成功率 | Sokoban 平均回合 | Navigation 成功率 | Navigation 平均回合 | 峰值显存 (MiB) |
 |---|---:|---:|---:|---:|---:|
-| Base Qwen2.5-VL-3B | 15% | 3.8 | 8% | 8.2 | 42,000 |
+| Base Qwen2.5-VL-3B（推理） | 15% | 3.8 | 8% | 8.2 | 42,000 |
 | concat GRPO | 45% | 3.2 | 28% | 6.8 | 46,000 |
 | no-concat GAE | 42% | 3.5 | 25% | 7.2 | 47,500 |
 | no-concat episode GRPO | **48%** | 3.0 | **32%** | 6.5 | 45,500 |
 
 三种训练方法首次更新前的 ratio P95 落在 `0.96–0.98`，全部通过 parity 门控。
 
-重构轨迹之后，critic-free 的组相对目标在两个环境上都好于逐轮 GAE，而且不需要维护 critic，峰值显存低约 2,000 MiB。更值得注意的是短上下文的 episode GRPO 与拼接完整历史的 concat GRPO 相当甚至略高——这说明 no-concat 掉点的主要来源是统计单元退化，而不是上下文长度本身。成功轨迹的平均回合在三种方法上都低于基础模型，episode GRPO 最低，路径效率的变化方向与成功率一致。
+重构轨迹之后，critic-free 的组相对目标在两个环境上都好于逐轮 GAE，而且不需要维护 critic，峰值显存低约 2,000 MiB。短上下文的 episode GRPO 与拼接完整历史的 concat GRPO 相当甚至略高——在两者用同一套 held-out 棋盘、各自的训练上下文协议评测的前提下，这说明 no-concat 的短上下文并没有构成成功率上限。成功轨迹的平均回合在三种方法上都低于基础模型，episode GRPO 最低。
+
+这三条是完整 recipe 的比较，不是单变量消融：三者在每个 global step 的 optimizer step 数、奖励目标、组内标准差口径和每回合响应预算上同时不同。[EXPERIMENTS.md §2.1](EXPERIMENTS.md) 列出了这些共变量及其代码位置；要把差异归因到单一机制，需要先统一这些设置再单独跑一次消融。
 
 完整的实验协议、统计口径与 funnel 定义见 [EXPERIMENTS.md](EXPERIMENTS.md)；方法、环境、seed、步数和阈值的机器可读定义见 [experiments/matrix.yaml](experiments/matrix.yaml)。
 
@@ -262,22 +243,26 @@ python -m vagen.envs.navigation.pre_download_scenes
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
 ENVIRONMENT=sokoban \
+EVAL_METHOD=base \
 EVALUATION_ROLE=base_eval \
 OBSERVATION_ABLATION=none \
   bash scripts/run_visual_eval.sh
 ```
 
-默认任务集合就是 final test 划分：Sokoban seeds `10129` 起 128 个，Navigation `base` tasks `30` 起 30 个，可用 `SEED_START` 与 `N_ENVS` 覆盖。`MODEL_PATH` 指向 HuggingFace 模型目录或仓库 id；`EVALUATION_ROLE` 取 `diagnostic` / `base_eval` / `anti_cheat` / `final_test`，其中 `final_test` 要求显式传入 checkpoint 的来源 manifest 并强制 `OBSERVATION_ABLATION=none`。
+`EVAL_METHOD` 命名被评测 checkpoint 的训练方法，并据此决定上下文协议：`no_concat_gae` 与 `no_concat_episode_grpo` 只发送系统提示和当前观测，`base` 与 `concat_grpo` 发送完整历史。`final_test` 角色不允许手工覆盖这个协议。
+
+默认任务集合就是 final test 划分：Sokoban 使用 `experiments/sokoban_board_split.json` 里枚举的 128 个棋盘级 seed，Navigation 是 `base` tasks `30` 起 30 个。传入 `SEED_START` 会切换成显式的连续窗口并忽略枚举列表。`MODEL_PATH` 指向 HuggingFace 模型目录或仓库 id；`EVALUATION_ROLE` 取 `diagnostic` / `base_eval` / `anti_cheat` / `final_test`，其中 `final_test` 要求显式传入 checkpoint 的来源 manifest 并强制 `OBSERVATION_ABLATION=none`。
 
 视觉依赖评测一次跑完三种观测条件：
 
 ```bash
+EVAL_METHOD=no_concat_episode_grpo \
 EVAL_ENVIRONMENT=sokoban \
 EVAL_MODEL_PATH=/absolute/path/to/exported_hf_checkpoint \
   bash scripts/run_experiment_matrix.sh anti-cheat
 ```
 
-每个评测目录会写出 `manifest.json`、`eval_command.sh`、`resolved_config.txt`、逐 episode 的指标与 transcript、图像和 GPU 采样。观测条件参与 resume 身份，因此一个未消融的 episode 不会被错误地复用为消融结果。
+每个评测目录会写出 `manifest.json`、`eval_command.sh`、`resolved_config.txt`、逐 episode 的指标与 transcript、图像和 GPU 采样。观测条件与上下文协议都参与 resume 身份，因此一个未消融、或用完整历史跑出来的 episode 不会被错误地复用。
 
 ## 仓库结构
 
@@ -318,40 +303,64 @@ conda run -n vagen python -m vagen.analysis.run_cpu_experiments \
 
 结果应与 [`results/cpu/20260808-mac-arm64/`](results/cpu/20260808-mac-arm64/) 一致。Sokoban 的重试 seed 用 blake2s 推进而不是 Python 的 `hash()`，因此在不同 `PYTHONHASHSEED` 下可复现。
 
-### 实验 funnel
+### 复现结果表
 
-[`scripts/run_experiment_matrix.sh`](scripts/run_experiment_matrix.sh) 按阶段组织整套实验。不需要 GPU 的阶段：
-
-```bash
-bash scripts/run_experiment_matrix.sh describe          # 打印 matrix.yaml
-bash scripts/run_experiment_matrix.sh validate-matrix   # 校验矩阵与仓库的一致性
-DRY_RUN=1 bash scripts/run_experiment_matrix.sh dry-run # 解析 6 个训练组合 + 2 个评测
-```
-
-需要 GPU 的阶段，按顺序：
+结果表的三个训练方法都要跑，因此 confirmatory 阶段要显式列出三种方法，并且后续每一步都要带上同一组方法与 seed（脚本不会记住上一阶段的环境变量）：
 
 ```bash
-bash scripts/run_experiment_matrix.sh smoke              # 真实更新路径与显存风险
+export SELECTED_METHODS=concat_grpo,no_concat_gae,no_concat_episode_grpo
+export CONFIRMATORY_SEEDS=0,1,2
+export REWARD_MODE=outcome LOSS_WEIGHTING=trajectory
+
 bash scripts/run_experiment_matrix.sh base-eval          # 两个环境的零样本基线
-bash scripts/run_experiment_matrix.sh core-screening     # 3 方法 × 2 环境 × 50 updates
-bash scripts/run_experiment_matrix.sh episode-screening  # 3 奖励归约 × 3 策略目标
-
-SELECTED_METHODS=no_concat_episode_grpo \
-CONFIRMATORY_SEEDS=0,1,2 \
-  bash scripts/run_experiment_matrix.sh confirmatory     # 2 环境 × 3 seeds × 401 updates
-```
-
-训练结束后的选择与测试链路：
-
-```bash
+bash scripts/run_experiment_matrix.sh confirmatory       # 3 方法 × 2 环境 × 3 seeds × 401 updates
 bash scripts/run_experiment_matrix.sh select-checkpoints # 仅用 validation 指标选 checkpoint
 bash scripts/run_experiment_matrix.sh export-checkpoints # 合并 LoRA 并导出 HF 权重
 bash scripts/run_experiment_matrix.sh final-test         # 每个冻结 checkpoint 评测一次
-bash scripts/run_experiment_matrix.sh final-results      # 按 (方法, 环境) 聚合三个 seed
+
+FINAL_EXPECTED_METHODS="${SELECTED_METHODS}" \
+  bash scripts/run_experiment_matrix.sh final-results    # 按 (方法, 环境) 聚合三个 seed
 bash scripts/run_experiment_matrix.sh publish-results    # 写入 results/main_results.csv
 ```
 
-`ENVIRONMENTS`、`METHODS`、`SCREENING_STEPS`、`CONFIRMATORY_STEPS` 等变量可以缩小或扩大任一阶段的范围。
+`final-test` 从每个 checkpoint 的导出 manifest 里读出训练方法，据此选择评测的上下文协议；`final-results` 在训练与评测协议不一致、parity 未通过或三个 seed 不齐时把该行标为不完整，`publish-results` 只发布完整的行。
+
+只确认一个方法时把 `SELECTED_METHODS` 收窄即可。先跑 screening 缩小搜索范围：
+
+```bash
+bash scripts/run_experiment_matrix.sh smoke              # 真实更新路径与显存风险
+bash scripts/run_experiment_matrix.sh core-screening     # 3 方法 × 2 环境 × 50 updates
+bash scripts/run_experiment_matrix.sh episode-screening  # 3 奖励归约 × 3 策略目标
+```
+
+视觉依赖评测需要显式给出 checkpoint 的训练方法：
+
+```bash
+EVAL_METHOD=no_concat_episode_grpo \
+EVAL_ENVIRONMENT=sokoban \
+EVAL_MODEL_PATH=/absolute/path/to/exported_hf_checkpoint \
+  bash scripts/run_experiment_matrix.sh anti-cheat
+```
+
+不需要 GPU 的检查：
+
+```bash
+bash scripts/run_experiment_matrix.sh describe          # 打印 matrix.yaml
+bash scripts/run_experiment_matrix.sh validate-matrix   # 校验矩阵、数据划分与棋盘级 split
+DRY_RUN=1 bash scripts/run_experiment_matrix.sh dry-run # 解析 6 个训练组合 + 2 个评测
+```
+
+### 重建 Sokoban 棋盘划分
+
+```bash
+conda run -n vagen python -m vagen.analysis.sokoban_board_split \
+  build --output experiments/sokoban_board_split.json
+
+conda run -n vagen python -m vagen.analysis.sokoban_board_split \
+  verify --split experiments/sokoban_board_split.json --sample 8
+```
+
+`build` 会为训练与验证的每个 seed 生成一次棋盘（约 20 分钟），再从候选区间里挑出 128 个未见且互不相同的测试棋盘。`verify` 只做结构校验，`--sample N` 会重新生成 N 个测试棋盘确认指纹未漂移。
 
 ### 分析原始 rollout
 
@@ -366,14 +375,7 @@ done
 python -m vagen.analysis.analyze_rollouts "${run_args[@]}" --output-dir results/gpu/raw_runs
 ```
 
-state-relative 分组的可识别性预检（anchor 覆盖率、可比行比例、动作多样性、return-to-go 方差）：
-
-```bash
-STATE_PREFLIGHT_OUTPUT=results/gpu/state-relative-preflight.json \
-  bash scripts/run_experiment_matrix.sh state-preflight exps/<run>/rollouts/*.jsonl
-```
-
-预检给出 `stop` 是有效的负面结果：在信号不可识别时，state-relative 优势不会被启用。`results/gpu/` 已在 `.gitignore` 中，把分析产物写在这里可以避免污染工作树——正式训练与评测都拒绝脏工作树。
+`results/gpu/` 已在 `.gitignore` 中；分析产物写在别处会让工作树变脏，而正式训练与评测都拒绝脏工作树。
 
 ## Acknowledgements
 

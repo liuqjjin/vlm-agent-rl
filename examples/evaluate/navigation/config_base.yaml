@@ -10,6 +10,9 @@ envs:
     seed: [30, 59, 1]  # Final test: base tasks 30-59, disjoint from train (base_train) and val (base 0-29)
     max_turns: 10
     observation_ablation: none
+    # Set per method by scripts/run_visual_eval.sh; a no-concat policy must be
+    # tested under the context protocol it was trained with.
+    concat_multi_turn: true
     config:
       base_urls: "http://localhost:8000"
       timeout: 120

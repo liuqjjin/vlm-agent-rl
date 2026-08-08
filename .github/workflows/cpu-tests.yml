@@ -52,6 +52,7 @@ jobs:
             vagen/utils/logprob_parity.py \
             vagen/utils/run_manifest.py \
             vagen/utils/state_anchor.py \
+            vagen/tests/test_evaluation_context_protocol.py \
             vagen/tests/test_experiment_entrypoints.py \
             vagen/tests/test_final_evaluation_pipeline.py \
             vagen/tests/test_gpu_metrics.py \
@@ -59,7 +60,8 @@ jobs:
             vagen/tests/test_no_concat_episode_grpo.py \
             vagen/tests/test_no_concat_agent_loop.py \
             vagen/tests/test_rollout_analysis.py \
-            vagen/tests/test_seed_partitions.py
+            vagen/tests/test_seed_partitions.py \
+            vagen/tests/test_sokoban_board_split.py
 
       - name: Validate critical configs
         run: |
@@ -89,6 +91,8 @@ jobs:
             vagen/tests/test_final_evaluation_pipeline.py \
             vagen/tests/test_validation_padding.py \
             vagen/tests/test_data_splits.py \
+            vagen/tests/test_evaluation_context_protocol.py \
+            vagen/tests/test_sokoban_board_split.py \
             verl/tests/trainer/ppo/test_sparse_value_supervision_on_cpu.py \
             verl/tests/trainer/ppo/test_policy_weights_on_cpu.py \
             verl/tests/trainer/ppo/test_policy_weights_integration.py

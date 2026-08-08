@@ -7,9 +7,28 @@ envs:
   - name: Sokoban
     n_envs: 128
     tag_id: sokoban_test
-    seed: [10129, 10256, 1]  # Final test: [10129, 10256], disjoint from train [1, 10000] and val [10001, 10128]
+    # Final test seeds come from experiments/sokoban_board_split.json: each one
+    # generates a board that is distinct from every other test board and absent
+    # from both the train and validation board sets under this generation
+    # config.  Seed ranges alone are not sufficient, because reset() advances
+    # the requested seed until min_solution_steps is satisfied and different
+    # requested seeds can converge on the same room.
+    seed_list: [20003, 20004, 20009, 20010, 20015, 20018, 20033, 20034, 20038, 20040, 20049,
+      20059, 20064, 20066, 20068, 20069, 20073, 20075, 20077, 20088, 20093, 20098, 20102,
+      20103, 20111, 20113, 20117, 20119, 20122, 20123, 20130, 20135, 20136, 20144, 20154,
+      20158, 20165, 20166, 20168, 20169, 20176, 20185, 20190, 20205, 20206, 20213, 20226,
+      20227, 20251, 20252, 20254, 20256, 20257, 20261, 20262, 20263, 20265, 20267, 20270,
+      20272, 20278, 20279, 20287, 20296, 20301, 20302, 20303, 20307, 20312, 20315, 20320,
+      20323, 20325, 20330, 20339, 20348, 20352, 20355, 20357, 20359, 20362, 20364, 20377,
+      20391, 20392, 20396, 20402, 20407, 20408, 20410, 20413, 20415, 20416, 20421, 20431,
+      20438, 20448, 20451, 20456, 20457, 20474, 20488, 20492, 20493, 20505, 20511, 20519,
+      20521, 20535, 20536, 20546, 20547, 20557, 20560, 20566, 20570, 20573, 20574, 20595,
+      20599, 20605, 20611, 20617, 20618, 20623, 20625, 20636, 20645]
     split: test
     max_turns: 5
+    # Set per method by scripts/run_visual_eval.sh; a no-concat policy must be
+    # tested under the context protocol it was trained with.
+    concat_multi_turn: true
     config:
       dim_room: [6, 6]
       max_steps: 100
@@ -19,6 +38,9 @@ envs:
       action_sep: ","
       use_example_in_sys_prompt: true
       prompt_format: wm
+      # Matches the train/validation difficulty window so the held-out split
+      # differs in board identity, not in puzzle difficulty.
+      min_solution_steps: [1, 5]
     chat_config:
       temperature: 0
       max_tokens: 1024

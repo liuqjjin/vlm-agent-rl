@@ -20,6 +20,8 @@ PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl" "${PYTHON_BIN}" -m pytest -q \
   vagen/tests/test_seed_partitions.py \
   vagen/tests/test_navigation_state_anchor.py \
   vagen/tests/test_observation_ablation.py \
+  vagen/tests/test_evaluation_context_protocol.py \
+  vagen/tests/test_sokoban_board_split.py \
   vagen/tests/test_gpu_metrics.py \
   vagen/tests/test_rollout_analysis.py \
   vagen/tests/test_experiment_entrypoints.py \
