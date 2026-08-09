@@ -4,6 +4,19 @@
 
 正式模型是 `Qwen/Qwen2.5-VL-3B-Instruct`，训练使用单卡 LoRA + vLLM 异步 rollout，评测使用 SGLang 独立推理服务。本仓库是 [VAGEN](https://github.com/mll-lab-nu/VAGEN) 的研究分支：训练与环境基础设施沿用上游，本项目改动的是学习目标、稀疏监督的正确性和实验协议。
 
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="docs/assets/vagen-sokoban.gif" alt="Sokoban visual environment" width="82%"></td>
+    <td align="center" width="50%"><img src="docs/assets/vagen-navigation.gif" alt="Navigation visual environment" width="82%"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Sokoban</sub></td>
+    <td align="center"><sub>Navigation</sub></td>
+  </tr>
+</table>
+
+<p align="center"><sub>环境观测示例，来源于 VAGEN（MIT）；用于说明交互形式，不代表本项目 checkpoint 的输出。</sub></p>
+
 ## 研究动机
 
 多轮 Agent 的 RL 训练有两种常见的数据组织方式。concat 把系统提示、历史观测和历史动作拼进当前样本，一行数据就是一条轨迹，轨迹语义直接，但视觉 token 随回合累积，Navigation 这类任务需要一万级的 response 预算。no-concat 让每个回合单独成一行，prompt 只包含系统提示和当前观测，target 只包含当前动作，prompt 长度不随回合增长、每回合响应预算固定在 512 token，代价是一行数据不再等于一条轨迹。
@@ -27,23 +40,9 @@
 | no-concat GAE | 单个 turn | 重构后的时序 GAE | 是 | 1 | `no_concat_gae` |
 | no-concat episode GRPO | 单个 turn | 重构后的轨迹 / 组 | 否 | 4 | `no_concat_episode_grpo` |
 
-```mermaid
-flowchart LR
-    E["视觉环境多轮交互"] --> C{"上下文组织"}
-    C -->|concat| T["每条轨迹一行"]
-    C -->|no-concat| U["每个回合一行"]
-    T --> Q["rollout / train 概率一致性门控"]
-    U --> Q
-    Q -->|失败| X["写出 parity.json 并终止"]
-    Q -->|通过| A{"优势估计"}
-    A --> B["concat GRPO"]
-    A --> R["去重 + 完整轨迹重构"]
-    R --> G["no-concat GAE (稀疏 value 监督)"]
-    R --> P["episode GRPO (critic-free)"]
-    B --> O["策略更新"]
-    G --> O
-    P --> O
-```
+<p align="center"><img src="docs/assets/episode-grpo-overview.png" alt="No-concat episode GRPO framework" width="100%"></p>
+
+<p align="center"><sub>逐 turn 样本经 padding 去重与轨迹重构，在 episode 粒度计算组内相对优势并回传至 action token。图中的 R / A 为符号，不是实验数值。</sub></p>
 
 概率一致性门控在首次更新前、优势计算之前执行。基础模型只做零样本评测，作为统一起点。
 
@@ -89,6 +88,10 @@ no-concat GAE 每个回合只在一个 token 位置写入 value 目标，其余�
 两处都曾断开：估计器从 `no_concat_gae_first` 改名为 `no_concat_gae` 后，trainer 的分发条件仍然只列旧名；而 verl 的 critic worker 用固定的 7 个 key 做 `select`，`value_mask` 在到达损失函数之前就被丢掉了。修复后（[`vagen/ray_trainer.py`](vagen/ray_trainer.py) 与 verl 的 `_critic_update_batch_keys`），被忽略位置的梯度严格为 0。
 
 20 步优化的对照结果：被屏蔽位置停在 `0.500`，未修复路径漂移到 `-87.782`；受监督位置从 `-1.0` 收敛到 `1.965`，目标 `2.0`。原始数据在 [`results/cpu/20260808-mac-arm64/raw/value_mask_steps.csv`](results/cpu/20260808-mac-arm64/raw/value_mask_steps.csv)。
+
+<p align="center"><img src="results/cpu/20260808-mac-arm64/cpu_diagnostics.svg" alt="Sparse critic supervision and Sokoban reward-length bias diagnostics" width="92%"></p>
+
+<p align="center"><sub>可复现的机制诊断：左侧验证 value mask 的稀疏监督语义，右侧量化同一路径不同 turn 切分产生的奖励偏差。</sub></p>
 
 ### rollout / train 概率一致性门控
 

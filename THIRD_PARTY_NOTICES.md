@@ -13,6 +13,15 @@ replace the full upstream license texts.
 
 The full inherited license is retained in [`LICENSE`](LICENSE).
 
+The following VAGEN media files are redistributed as environment-observation
+examples under the same MIT license and are not presented as outputs of this
+project's trained checkpoints:
+
+- [`docs/assets/vagen-sokoban.gif`](docs/assets/vagen-sokoban.gif), original
+  [GitHub asset](https://github.com/user-attachments/assets/145352b5-3a9e-4248-bb94-d3fa46e6c493).
+- [`docs/assets/vagen-navigation.gif`](docs/assets/vagen-navigation.gif),
+  original [GitHub asset](https://github.com/user-attachments/assets/b364e6c9-4c2c-46d0-afca-ee42f271c59c).
+
 ## verl submodule
 
 - Source base: [JamesKrW/verl](https://github.com/JamesKrW/verl), itself a
