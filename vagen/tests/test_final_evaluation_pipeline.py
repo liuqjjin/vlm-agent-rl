@@ -217,6 +217,7 @@ def _final_run(root: Path, train_seed: int) -> Path:
             "concat_multi_turn": False,
             "n_envs": 2,
             "seed_start": 10129,
+            "expected_seeds": [10129, 10130],
             "source_run_dir": str(training_run),
             "source_selection_manifest": str(selection),
             "source_export_manifest": str(export),
@@ -352,6 +353,27 @@ def test_final_results_require_linked_three_seed_final_tests(tmp_path: Path) -> 
     assert incomplete["registry_complete"] is False
 
 
+def test_final_results_reject_episode_seeds_outside_the_frozen_set(
+    tmp_path: Path,
+) -> None:
+    runs = [_final_run(tmp_path, seed) for seed in range(3)]
+    metrics_path = runs[0] / "episodes" / "0" / "metrics.json"
+    metrics = json.loads(metrics_path.read_text())
+    metrics["seed"] = 999999
+    _write_json(metrics_path, metrics)
+
+    result = aggregate_final_tests(
+        runs,
+        tmp_path / "wrong_seed_results",
+        base_run_dirs=[_base_run(tmp_path)],
+        expected_methods=("no_concat_episode_grpo",),
+        expected_environments=("sokoban",),
+    )
+    assert result["aggregates"][0]["Status"] == "incomplete-artifacts"
+    assert result["registry_complete"] is False
+    assert "frozen task set" in result["per_run"][0]["Integrity Issues"]
+
+
 def test_repository_experiment_contract_is_consistent() -> None:
     root = Path(__file__).resolve().parents[2]
     report = validate_experiment_contract(
@@ -438,3 +460,6 @@ def test_matrix_final_test_dry_run_writes_linked_manifest(tmp_path: Path) -> Non
     assert manifest["evaluation_role"] == "final_test"
     assert manifest["source_train_seed"] == 0
     assert manifest["source_export_manifest"] == str(export)
+    assert manifest["expected_seeds"] == json.loads(
+        (root / "experiments/sokoban_board_split.json").read_text()
+    )["test"]["seeds"]

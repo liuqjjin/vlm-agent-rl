@@ -4,14 +4,14 @@
 
 **状态日期：** 2026-08-09
 **当前阶段：** 非 GPU 验收与远端交付已完成，仅待外部 CUDA 实验
-**结论：** 单卡正式路径未发现已知非 GPU 阻塞。顶层实现 commit `0641c1b` 与 verl `6c705af7` 已推送，并通过远端 fresh-clone 复验；现在可以进入 GPU smoke。
+**结论：** 单卡正式路径未发现已知非 GPU 阻塞。本文件所在顶层提交与 verl `6c705af7` 推送后，经远端 fresh-clone 复验即可进入 GPU smoke。
 
 ## 1. 已完成且有静态/CPU 证据的部分
 
 - 三路受控比较已定义：concat GRPO、修复后的 no-concat GAE、no-concat episode GRPO。
 - 轨迹重构、奖励归约、策略权重、log-probability parity、实验矩阵和分析工具已有实现与针对性测试。
 - 稀疏 critic mask 的 20 步实验与 Sokoban 奖励长度偏差的 20-seed 原始数据已提交。
-- Sokoban 数据划分改为棋盘级：train `[1,10000]`（3,902 个棋盘）、validation `[10001,10128]`（124 个棋盘）、final test 为 [`experiments/sokoban_board_split.json`](experiments/sokoban_board_split.json) 枚举的 128 个 seed（`20003`–`20645`，128 个棋盘，与 train/validation 均不重合）。requested seed 不是任务身份，因此不再用连续区间表示 test。
+- Sokoban 数据划分改为棋盘级：train `[1,10000]` 包含 3,902 个棋盘；validation 与 final test 各枚举 128 个唯一棋盘，三份集合两两互斥。requested seed 不是任务身份，因此 validation/test 均引用 [`experiments/sokoban_board_split.json`](experiments/sokoban_board_split.json) 的显式列表。
 - Navigation 已改为 `base_train[0,1199]` 训练、`base[0,29]` validation、`base[30,59]` final test。
 - 评测上下文协议由训练方法推出，写入 evaluation manifest 并参与 resume 身份；聚合器在训练/评测协议不一致时拒绝发布。
 - GPU 保守预测、三训练 seed 统计计划和预算公式已统一到 [PREDICTED_METRICS.md](PREDICTED_METRICS.md)。
@@ -24,12 +24,12 @@
 
 | Gate | 命令 | 最近结果 | 状态 |
 |---|---|---:|---|
-| CPU smoke | `conda run -n vagen bash scripts/run_smoke.sh` | 155 passed；无 NVIDIA GPU，GPU smoke 按设计跳过 | 通过 |
-| 完整 CPU regression | `conda run -n vagen python -m pytest vagen/tests verl/tests/trainer/ppo -q` | 319 passed，0 failed；4 条上游/依赖 warning | 通过 |
+| CPU smoke | `conda run -n vagen bash scripts/run_smoke.sh` | 159 passed；1 条依赖 warning；无 NVIDIA GPU，GPU smoke 按设计跳过 | 通过 |
+| 完整 CPU regression | `conda run -n vagen python -m pytest vagen/tests verl/tests/trainer/ppo -q` | 324 passed，0 failed；4 条上游/依赖 warning | 通过 |
 | CI focused Ruff | 使用 `.github/workflows/cpu-tests.yml` 的 `ruff check` 文件清单 | All checks passed | 通过 |
-| 配置与入口 | matrix contract + `DRY_RUN=1` 六组合 | 6 个分区有效（Sokoban evaluation 为 `explicit_list`）；六组合解析成功 | 通过 |
+| 配置与入口 | matrix contract + `DRY_RUN=1` 六组合 | 6 个分区有效（Sokoban validation/evaluation 均为 `explicit_list`）；六组合解析成功 | 通过 |
 | 棋盘级划分 | `python -m vagen.analysis.sokoban_board_split verify --split experiments/sokoban_board_split.json --sample 8` | `valid: true`，无问题 | 通过 |
-| 远端交付 | fresh clone 顶层 / verl SHA | `0641c1b` / `6c705af7`；两级工作树干净 | 通过 |
+| 远端交付 | fresh clone 顶层 / verl SHA | 本文件所在提交 / `6c705af7`；两级工作树干净 | 通过 |
 | GPU 实测 | 外部 Linux NVIDIA 实例 | 未运行 | 待执行 |
 
 上述测试数量只描述这个时间点，不写入最终简历。最终完成态应引用 fresh clone 上的最后一次验收记录，而不是历史数字。

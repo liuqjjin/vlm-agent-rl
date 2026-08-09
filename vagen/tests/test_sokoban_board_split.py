@@ -36,12 +36,15 @@ def test_committed_split_is_internally_consistent() -> None:
 def test_test_boards_are_absent_from_train_and_validation() -> None:
     split = load_split(SPLIT_PATH)
     train = set(split["train"]["fingerprints"])
-    validation = set(split["validation"]["fingerprints"])
+    validation = set(split["validation"]["fingerprints"].values())
     test = set(split["test"]["fingerprints"].values())
 
+    assert validation, "the split records no validation boards"
     assert test, "the split records no test boards"
+    assert not validation & train
     assert not test & train
     assert not test & validation
+    assert len(validation) == split["validation"]["seed_count"]
     assert len(test) == split["test"]["seed_count"]
 
 
@@ -53,12 +56,18 @@ def test_requested_seeds_collapse_onto_fewer_boards() -> None:
     assert board_count < seed_count
 
 
-def test_evaluation_config_uses_the_committed_seed_list() -> None:
+@pytest.mark.parametrize(
+    ("config_path", "split_role"),
+    [(VAL_CONFIG, "validation"), (EVAL_CONFIG, "test")],
+)
+def test_runtime_config_uses_the_committed_seed_list(
+    config_path: Path, split_role: str
+) -> None:
     split = load_split(SPLIT_PATH)
-    config = yaml.safe_load(EVAL_CONFIG.read_text())
+    config = yaml.safe_load(config_path.read_text())
     environment = config["envs"][0]
-    assert environment["seed_list"] == split["test"]["seeds"]
-    assert environment["n_envs"] == len(split["test"]["seeds"])
+    assert environment["seed_list"] == split[split_role]["seeds"]
+    assert environment["n_envs"] == len(split[split_role]["seeds"])
 
 
 def test_evaluation_matches_the_training_difficulty_window() -> None:
@@ -136,6 +145,43 @@ def test_contract_rejects_a_seed_list_that_drifts_from_the_split(tmp_path: Path)
     matrix_path.write_text(yaml.safe_dump(matrix))
 
     with pytest.raises(ValueError, match="does not match"):
+        validate_experiment_contract(matrix_path, repo_root=tmp_path)
+
+
+def test_contract_rejects_a_validation_list_that_drifts_from_the_split(
+    tmp_path: Path,
+) -> None:
+    matrix = yaml.safe_load((ROOT / "experiments" / "matrix.yaml").read_text())
+    split = json.loads(SPLIT_PATH.read_text())
+    validation = yaml.safe_load(VAL_CONFIG.read_text())
+    validation["envs"][0]["seed_list"][-1] = 999999
+
+    for relative in (
+        "experiments",
+        "examples/evaluate/sokoban",
+        "examples/train/sokoban",
+        "examples/train/navigation",
+        "examples/evaluate/navigation",
+    ):
+        (tmp_path / relative).mkdir(parents=True, exist_ok=True)
+    (tmp_path / "experiments" / "sokoban_board_split.json").write_text(
+        json.dumps(split)
+    )
+    (tmp_path / "examples/train/sokoban/val_sokoban_vision.yaml").write_text(
+        yaml.safe_dump(validation)
+    )
+    for relative in (
+        "examples/evaluate/sokoban/config.yaml",
+        "examples/train/sokoban/train_sokoban_vision.yaml",
+        "examples/train/navigation/train_navigation.yaml",
+        "examples/train/navigation/val_navigation.yaml",
+        "examples/evaluate/navigation/config_base.yaml",
+    ):
+        (tmp_path / relative).write_text((ROOT / relative).read_text())
+    matrix_path = tmp_path / "experiments" / "matrix.yaml"
+    matrix_path.write_text(yaml.safe_dump(matrix))
+
+    with pytest.raises(ValueError, match="validation seed_list does not match"):
         validate_experiment_contract(matrix_path, repo_root=tmp_path)
 
 

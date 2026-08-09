@@ -529,8 +529,22 @@ def _final_test_record(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, An
         linkage_issues.append(
             f"expected {expected_episodes} final-test episodes, found {len(episodes)}"
         )
-    if len({episode.get("seed") for episode in episodes}) != len(episodes):
+    actual_seeds = [episode.get("seed") for episode in episodes]
+    if len(set(actual_seeds)) != len(episodes):
         linkage_issues.append("final-test episode seeds are not unique")
+    expected_seeds = manifest.get("expected_seeds")
+    if (
+        not isinstance(expected_seeds, list)
+        or not expected_seeds
+        or any(
+            not isinstance(seed, int) or isinstance(seed, bool)
+            for seed in expected_seeds
+        )
+        or len(set(expected_seeds)) != len(expected_seeds)
+    ):
+        linkage_issues.append("manifest does not record a valid frozen final-test seed set")
+    elif set(actual_seeds) != set(expected_seeds):
+        linkage_issues.append("final-test episode seeds do not match the frozen task set")
 
     base_row = build_result_row(run_dir)
     status = base_row["Status"]

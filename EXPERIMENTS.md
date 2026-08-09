@@ -1,6 +1,6 @@
 # 实验协议
 
-本文定义正式实验的比较对象、数据划分、funnel、统计粒度与证据要求。声明式配置 [experiments/matrix.yaml](experiments/matrix.yaml) 是方法、环境、seed、steps 和硬门槛的机器可读真值源；若本文与矩阵冲突，应先停止运行并同步二者。
+本文定义正式实验的比较对象、数据划分、执行阶段、统计粒度与证据要求。声明式配置 [experiments/matrix.yaml](experiments/matrix.yaml) 是方法、环境、seed、steps 和硬门槛的机器可读真值源；若本文与矩阵冲突，应先停止运行并同步二者。
 
 当前代码与交付状态见 [PROJECT_STATUS.md](PROJECT_STATUS.md)。GPU 预算和 8 行规划中央值见 [PREDICTED_METRICS.md](PREDICTED_METRICS.md)。
 
@@ -55,15 +55,15 @@ loss_weighting ∈ {token, turn, trajectory}
 
 Sokoban 的 seed **不是**任务身份。`PatchedSokobanEnv.reset` 会在生成的房间不满足 `min_solution_steps` 时继续换 seed 重试，因此不同的 requested seed 可能收敛到同一个棋盘：10,000 个训练 seed 只产生 3,902 个不同棋盘。仅按 seed 区间划分会让大量测试棋盘在训练中出现过。
 
-正式划分因此按**生成后的棋盘**进行。[`vagen/analysis/sokoban_board_split.py`](vagen/analysis/sokoban_board_split.py) 对每个 requested seed 实际生成的 `(room_fixed, room_state)` 取指纹，并挑出与 train、validation 都不重合、且彼此互不相同的测试 seed；结果提交在 [`experiments/sokoban_board_split.json`](experiments/sokoban_board_split.json)，评测配置直接引用其 `seed_list`。
+正式划分因此按**生成后的棋盘**进行。[`vagen/analysis/sokoban_board_split.py`](vagen/analysis/sokoban_board_split.py) 对每个 requested seed 实际生成的 `(room_fixed, room_state)` 取指纹，依次选择与 train 互斥的 validation 棋盘，以及与 train/validation 都互斥的测试棋盘；结果提交在 [`experiments/sokoban_board_split.json`](experiments/sokoban_board_split.json)，运行配置直接引用其中的 `seed_list`。
 
 | 用途 | 配置 | Requested seeds | Episode 数 | 不同棋盘 |
 |---|---|---|---:|---:|
 | Train | `examples/train/sokoban/train_sokoban_vision.yaml` | `[1, 10000]` | 10,000 | 3,902 |
-| Validation | `examples/train/sokoban/val_sokoban_vision.yaml` | `[10001, 10128]` | 128 | 124 |
-| Final test | `examples/evaluate/sokoban/config.yaml` | 枚举 `seed_list`（`20003`–`20645`） | 128 | 128 |
+| Validation | `examples/train/sokoban/val_sokoban_vision.yaml` | 枚举 `seed_list`（`10004`–`10579`） | 128 | 128 |
+| Final test | `examples/evaluate/sokoban/config.yaml` | 枚举 `seed_list`（`20003`–`20655`） | 128 | 128 |
 
-测试集的 128 个棋盘互不相同，且都不在 train/validation 的棋盘集合中。三份配置使用同一个 `min_solution_steps: [1,5]` 难度窗口，因此 held-out 的差异是棋盘身份，不是题目难度。Validation 可能与训练共享棋盘（用于 checkpoint 选择而非最终声明），但测试集与两者都互斥。
+Validation 和 final test 各包含 128 个唯一棋盘，train/validation/test 三份集合两两互斥。三份配置使用同一个 `min_solution_steps: [1,5]` 难度窗口，因此 held-out 的差异是棋盘身份，不是题目难度。
 
 重新生成与校验：
 
@@ -105,7 +105,7 @@ Confirmatory training seeds 固定为 `{0,1,2}`。它们控制 Python hash 和�
 - Qwen3-VL 在 processor、M-RoPE position ID 与 parity 验证前 fail-closed；
 - state-relative 方法在真实 base rollout 通过 preflight 前不进入核心矩阵。
 
-## 5. 分层实验 funnel
+## 5. 阶段化实验流程
 
 ### Phase 0：CPU 正确性
 

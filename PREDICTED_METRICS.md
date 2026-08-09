@@ -6,7 +6,7 @@
 
 机器可读表固定保留 8 行中央值：4 种方法状态（base + 3 个训练方法）× 2 个环境。
 
-- Base 行使用一次固定 held-out 评测：Sokoban 为 [`experiments/sokoban_board_split.json`](experiments/sokoban_board_split.json) 枚举的 128 个棋盘级 seed（`20003`–`20645`），Navigation `base` tasks `[30, 59]`。
+- Base 行使用一次固定 held-out 评测：Sokoban 为 [`experiments/sokoban_board_split.json`](experiments/sokoban_board_split.json) 枚举的 128 个棋盘级 seed（`20003`–`20655`），Navigation `base` tasks `[30, 59]`。
 - 训练方法行的成功率、成功平均回合和 Ratio P95，表示训练 seeds `{0,1,2}` 的**计划聚合中央值**。
 - 训练方法行的 GPU·h 表示**单环境、单训练 seed、401 updates** 的预计占卡时间，不是三个 seeds 的合计。
 - 峰值显存表示同配置单卡运行的规划中央值；最终报告取实测运行中的最大值，并附卡型与配置。
@@ -16,16 +16,16 @@
 
 | 方法 | 环境 | 成功率 | 峰值显存 (MiB) | GPU·h / seed | 成功平均回合 | Ratio P95 |
 |---|---|---:|---:|---:|---:|---:|
-| Base Qwen2.5-VL-3B | Sokoban | 15% | 42,000 | 0.8 | 3.8 | — |
-| concat GRPO | Sokoban | 45% | 46,000 | 12.5 | 3.2 | 0.98 |
-| fixed no-concat GAE | Sokoban | 42% | 47,500 | 14.2 | 3.5 | 0.97 |
-| no-concat episode GRPO | Sokoban | **48%** | 45,500 | 12.8 | **3.0** | 0.98 |
-| Base Qwen2.5-VL-3B | Navigation | 8% | 42,000 | 1.2 | 8.2 | — |
-| concat GRPO | Navigation | 28% | 46,000 | 18.5 | 6.8 | 0.97 |
-| fixed no-concat GAE | Navigation | 25% | 47,500 | 20.8 | 7.2 | 0.96 |
-| no-concat episode GRPO | Navigation | **32%** | 45,500 | 19.2 | **6.5** | 0.97 |
+| Base Qwen2.5-VL-3B | Sokoban | 14.8%（19/128） | 42,000 | 0.8 | 3.8 | — |
+| concat GRPO | Sokoban | 45.1%（173/384） | 46,000 | 12.5 | 3.2 | 0.98 |
+| fixed no-concat GAE | Sokoban | 41.9%（161/384） | 47,500 | 14.2 | 3.5 | 0.97 |
+| no-concat episode GRPO | Sokoban | **47.9%（184/384）** | 45,500 | 12.8 | **3.0** | 0.98 |
+| Base Qwen2.5-VL-3B | Navigation | 6.7%（2/30） | 42,000 | 1.2 | 8.0 | — |
+| concat GRPO | Navigation | 27.8%（25/90） | 46,000 | 18.5 | 6.8 | 0.97 |
+| fixed no-concat GAE | Navigation | 25.6%（23/90） | 47,500 | 20.8 | 7.2 | 0.96 |
+| no-concat episode GRPO | Navigation | **32.2%（29/90）** | 45,500 | 19.2 | **6.5** | 0.97 |
 
-这些圆整数值是实验前假设，不表示 episode GRPO 一定优于 baseline，也不预设差异具有统计显著性。
+这些数值是实验前的中央假设。成功率写成与正式评测分母一致的可达计数，便于结果表预演；它们不表示 episode GRPO 一定优于 baseline，也不预设差异具有统计显著性。
 
 ## 3. 预测依据与自洽检查
 

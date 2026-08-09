@@ -105,23 +105,26 @@ def _validate_board_split(
         for problem in check_split_consistency(split)
     ]
 
-    evaluation_relative = specification.get("evaluation")
-    if isinstance(evaluation_relative, str):
-        evaluation_path = (repo_root / evaluation_relative).resolve()
-        if evaluation_path.is_file():
+    for role, artifact_role in (("validation", "validation"), ("evaluation", "test")):
+        relative_config = specification.get(role)
+        if isinstance(relative_config, str):
+            config_path = (repo_root / relative_config).resolve()
+        else:
+            continue
+        if config_path.is_file():
             try:
-                evaluation_environment = _first_environment(evaluation_path)
+                configured_environment = _first_environment(config_path)
                 declared = _seed_list(
-                    evaluation_environment.get("seed_list"), path=evaluation_path
+                    configured_environment.get("seed_list"), path=config_path
                 )
             except ValueError as error:
                 problems.append(f"{environment_name}.board_split: {error}")
             else:
-                expected = [int(seed) for seed in split["test"]["seeds"]]
+                expected = [int(seed) for seed in split[artifact_role]["seeds"]]
                 if declared != expected:
                     problems.append(
-                        f"{environment_name} evaluation seed_list does not match "
-                        f"{relative_path} test seeds"
+                        f"{environment_name} {role} seed_list does not match "
+                        f"{relative_path} {artifact_role} seeds"
                     )
     return problems
 
@@ -201,11 +204,10 @@ def validate_experiment_contract(
                 errors.append(str(error))
                 continue
 
-            # An evaluation split may enumerate its task seeds explicitly, which is
-            # required whenever seed ranges are not a faithful proxy for task
-            # identity (see the Sokoban board split).
+            # A split may enumerate task seeds explicitly whenever seed ranges are
+            # not a faithful proxy for task identity (see the Sokoban board split).
             explicit_seeds: list[int] | None = None
-            if role == "evaluation" and environment.get("seed_list") is not None:
+            if environment.get("seed_list") is not None:
                 try:
                     explicit_seeds = _seed_list(environment.get("seed_list"), path=path)
                 except ValueError as error:

@@ -56,7 +56,7 @@ nvidia-smi
 ```
 
 **If bootstrap fails:**
-- Check `autodl_bootstrap.log` for errors
+- Rerun with `2>&1 | tee autodl_bootstrap.log` if a persistent install log is needed
 - Verify disk space: `df -h` (need 600 GiB+ winner-only or 1.5 TiB full comparison)
 - Verify CUDA: `nvcc --version`
 - Try manual conda environment: `conda create -n vagen python=3.12`
@@ -126,7 +126,7 @@ bash scripts/run_experiment_matrix.sh base-eval
 
 **Expected output:**
 ```
-Sokoban: 128 episodes (board-disjoint seeds enumerated in experiments/sokoban_board_split.json, 20003-20645)
+Sokoban: 128 episodes (board-disjoint seeds enumerated in experiments/sokoban_board_split.json, 20003-20655)
 Navigation: 30 episodes (seeds 30-59; includes Unity rendering)
 
 Results written to:

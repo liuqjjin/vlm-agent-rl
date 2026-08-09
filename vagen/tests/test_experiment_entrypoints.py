@@ -310,6 +310,39 @@ def test_explicit_seed_start_overrides_an_enumerated_split(tmp_path: Path) -> No
     assert "envs.0.seed_list=null" in result.stdout
 
 
+def test_final_test_rejects_task_set_overrides(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "DRY_RUN": "1",
+            "ENVIRONMENT": "sokoban",
+            "EVALUATION_ROLE": "final_test",
+            "EVAL_METHOD": "no_concat_episode_grpo",
+            "SEED_START": "777",
+            "N_ENVS": "4",
+            "DUMP_DIR": str(tmp_path / "final_override"),
+            "PYTHON_BIN": sys.executable,
+            "SOURCE_RUN_DIR": str(tmp_path / "training"),
+            "SOURCE_SELECTION_MANIFEST": str(tmp_path / "selection.json"),
+            "SOURCE_EXPORT_MANIFEST": str(tmp_path / "export.json"),
+            "SOURCE_METHOD": "no_concat_episode_grpo",
+            "SOURCE_ENVIRONMENT": "sokoban",
+            "SOURCE_TRAIN_SEED": "0",
+            "SOURCE_CHECKPOINT_STEP": "200",
+        }
+    )
+    result = subprocess.run(
+        ["bash", str(VISUAL_EVAL_SCRIPT)],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "frozen task set" in result.stderr
+
+
 def test_episode_screening_uses_nine_distinct_run_names(tmp_path: Path) -> None:
     env = os.environ.copy()
     env.update(

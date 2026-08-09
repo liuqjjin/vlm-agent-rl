@@ -7,8 +7,8 @@ produce the same board, and a split that is only disjoint in *requested seeds*
 can still evaluate on rooms the policy trained on.
 
 This module fingerprints the board a requested seed actually produces, and
-builds a test split whose boards are disjoint from train and validation under
-the same generation config.
+builds validation and test splits whose boards are pairwise disjoint from the
+training boards and from each other under the same generation config.
 """
 
 from __future__ import annotations
@@ -87,8 +87,8 @@ def select_board_disjoint_seeds(
 
     Args:
         candidates: Requested seeds to consider, in priority order.
-        excluded_fingerprints: Boards already used by train or validation.
-        count: Number of test seeds to select.
+        excluded_fingerprints: Boards already assigned to an earlier split.
+        count: Number of seeds to select.
         environment_config: Generation config; must match the split being built.
         max_candidates: Safety bound on how many candidates are examined.
 
@@ -125,27 +125,35 @@ def select_board_disjoint_seeds(
 def build_split(
     *,
     train_range: tuple[int, int],
-    validation_range: tuple[int, int],
-    candidate_start: int,
+    validation_candidate_start: int,
+    validation_count: int,
+    test_candidate_start: int,
     test_count: int,
     environment_config: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fingerprint train and validation, then pick a board-disjoint test split."""
+    """Build pairwise board-disjoint train, validation, and test splits."""
     config = dict(environment_config or DEFAULT_ENVIRONMENT_CONFIG)
     train_seeds = range(train_range[0], train_range[1] + 1)
-    validation_seeds = range(validation_range[0], validation_range[1] + 1)
-
     train_fingerprints = fingerprint_seeds(train_seeds, config)
-    validation_fingerprints = fingerprint_seeds(validation_seeds, config)
-    excluded = set(train_fingerprints.values()) | set(validation_fingerprints.values())
 
-    candidates = iter(range(candidate_start, candidate_start + 200_000))
+    validation_candidates = iter(
+        range(validation_candidate_start, validation_candidate_start + 200_000)
+    )
+    validation_seeds, validation_fingerprints = select_board_disjoint_seeds(
+        validation_candidates,
+        set(train_fingerprints.values()),
+        validation_count,
+        config,
+    )
+
+    excluded = set(train_fingerprints.values()) | set(validation_fingerprints.values())
+    test_candidates = iter(range(test_candidate_start, test_candidate_start + 200_000))
     test_seeds, test_fingerprints = select_board_disjoint_seeds(
-        candidates, excluded, test_count, config
+        test_candidates, excluded, test_count, config
     )
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "digest_bytes": DIGEST_BYTES,
         "environment_config": config,
         "train": {
@@ -155,13 +163,16 @@ def build_split(
             "fingerprints": sorted(set(train_fingerprints.values())),
         },
         "validation": {
-            "seed_range": list(validation_range),
-            "seed_count": len(validation_fingerprints),
+            "candidate_start": int(validation_candidate_start),
+            "seeds": validation_seeds,
+            "seed_count": len(validation_seeds),
             "unique_boards": len(set(validation_fingerprints.values())),
-            "fingerprints": sorted(set(validation_fingerprints.values())),
+            "fingerprints": {
+                str(seed): value for seed, value in validation_fingerprints.items()
+            },
         },
         "test": {
-            "candidate_start": int(candidate_start),
+            "candidate_start": int(test_candidate_start),
             "seeds": test_seeds,
             "seed_count": len(test_seeds),
             "unique_boards": len(set(test_fingerprints.values())),
@@ -175,7 +186,7 @@ def load_split(path: str | Path) -> dict[str, Any]:
     payload = json.loads(Path(path).read_text())
     if not isinstance(payload, dict):
         raise ValueError(f"split artifact must be a JSON object: {path}")
-    if payload.get("schema_version") != 1:
+    if payload.get("schema_version") != 2:
         raise ValueError(f"unsupported split schema_version in {path}")
     return payload
 
@@ -183,35 +194,49 @@ def load_split(path: str | Path) -> dict[str, Any]:
 def check_split_consistency(split: Mapping[str, Any]) -> list[str]:
     """Return structural problems in a split artifact without regenerating boards.
 
-    The guarantee this checks is that the *test* boards are unseen: they must be
-    pairwise distinct and absent from both train and validation.  Train and
-    validation may legitimately share boards — validation only selects
-    checkpoints, it makes no held-out claim — so their overlap is not an error.
+    Both validation and test participate in model selection/reporting, so all
+    three board sets must be pairwise disjoint. Validation and test boards must
+    also be unique within their own split.
     """
     problems: list[str] = []
     train = set(split["train"]["fingerprints"])
-    validation = set(split["validation"]["fingerprints"])
+    validation_map = dict(split["validation"]["fingerprints"])
+    validation = set(validation_map.values())
     test_map = dict(split["test"]["fingerprints"])
     test = set(test_map.values())
 
+    if len(validation) != len(validation_map):
+        problems.append("validation seeds map onto duplicate boards")
     if len(test) != len(test_map):
         problems.append("test seeds map onto duplicate boards")
+    overlap_train_validation = validation & train
+    if overlap_train_validation:
+        problems.append(
+            f"{len(overlap_train_validation)} validation boards also appear in train"
+        )
     overlap_train = test & train
     if overlap_train:
         problems.append(f"{len(overlap_train)} test boards also appear in train")
     overlap_validation = test & validation
     if overlap_validation:
         problems.append(f"{len(overlap_validation)} test boards also appear in validation")
+    if len(validation_map) != int(split["validation"]["seed_count"]):
+        problems.append("validation seed_count does not match the fingerprint table")
     if len(test_map) != int(split["test"]["seed_count"]):
         problems.append("test seed_count does not match the fingerprint table")
 
     train_range = split["train"]["seed_range"]
-    validation_range = split["validation"]["seed_range"]
+    validation_seeds = {int(value) for value in validation_map}
+    test_seeds = {int(value) for value in test_map}
+    duplicate_requested_seeds = validation_seeds & test_seeds
+    if duplicate_requested_seeds:
+        problems.append("validation and test contain the same requested seed")
+    for seed in validation_seeds:
+        if train_range[0] <= seed <= train_range[1]:
+            problems.append(f"validation seed {seed} falls inside the train seed range")
     for seed in (int(value) for value in test_map):
         if train_range[0] <= seed <= train_range[1]:
             problems.append(f"test seed {seed} falls inside the train seed range")
-        if validation_range[0] <= seed <= validation_range[1]:
-            problems.append(f"test seed {seed} falls inside the validation seed range")
     return problems
 
 
@@ -219,17 +244,21 @@ def recompute_sample(
     split: Mapping[str, Any],
     sample_size: int,
 ) -> list[str]:
-    """Regenerate a few test boards and confirm the committed digests still hold."""
+    """Regenerate sampled validation/test boards and confirm their digests."""
     problems: list[str] = []
     config = split["environment_config"]
-    entries = sorted(split["test"]["fingerprints"].items(), key=lambda item: int(item[0]))
-    step = max(1, len(entries) // max(1, sample_size))
-    for seed_text, expected in entries[::step][:sample_size]:
-        actual = board_fingerprint(int(seed_text), config)
-        if actual != expected:
-            problems.append(
-                f"seed {seed_text} now produces board {actual}, committed {expected}"
-            )
+    for role in ("validation", "test"):
+        entries = sorted(
+            split[role]["fingerprints"].items(), key=lambda item: int(item[0])
+        )
+        step = max(1, len(entries) // max(1, sample_size))
+        for seed_text, expected in entries[::step][:sample_size]:
+            actual = board_fingerprint(int(seed_text), config)
+            if actual != expected:
+                problems.append(
+                    f"{role} seed {seed_text} now produces board {actual}, "
+                    f"committed {expected}"
+                )
     return problems
 
 
@@ -239,8 +268,9 @@ def main() -> int:
 
     build_parser = subparsers.add_parser("build", help="fingerprint splits and pick test seeds")
     build_parser.add_argument("--train-range", type=int, nargs=2, default=(1, 10000))
-    build_parser.add_argument("--validation-range", type=int, nargs=2, default=(10001, 10128))
-    build_parser.add_argument("--candidate-start", type=int, default=20001)
+    build_parser.add_argument("--validation-candidate-start", type=int, default=10001)
+    build_parser.add_argument("--validation-count", type=int, default=128)
+    build_parser.add_argument("--test-candidate-start", type=int, default=20001)
     build_parser.add_argument("--test-count", type=int, default=128)
     build_parser.add_argument("--output", type=Path, required=True)
 
@@ -250,7 +280,7 @@ def main() -> int:
         "--sample",
         type=int,
         default=0,
-        help="regenerate this many test boards to confirm the digests",
+        help="regenerate this many boards per held-out split to confirm the digests",
     )
 
     args = parser.parse_args()
@@ -258,8 +288,9 @@ def main() -> int:
     if args.command == "build":
         split = build_split(
             train_range=tuple(args.train_range),
-            validation_range=tuple(args.validation_range),
-            candidate_start=args.candidate_start,
+            validation_candidate_start=args.validation_candidate_start,
+            validation_count=args.validation_count,
+            test_candidate_start=args.test_candidate_start,
             test_count=args.test_count,
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -268,6 +299,7 @@ def main() -> int:
             json.dumps(
                 {
                     "train_unique_boards": split["train"]["unique_boards"],
+                    "validation_seeds": split["validation"]["seed_count"],
                     "validation_unique_boards": split["validation"]["unique_boards"],
                     "test_seeds": split["test"]["seed_count"],
                     "test_unique_boards": split["test"]["unique_boards"],

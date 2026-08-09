@@ -71,6 +71,7 @@ if [[ "${EVALUATION_ROLE}" == "final_test" && "${CONCAT_MULTI_TURN}" != "${DEFAU
 fi
 
 EXPLICIT_SEED_START="${SEED_START:-}"
+EXPLICIT_N_ENVS="${N_ENVS:-}"
 
 case "${ENVIRONMENT}" in
   sokoban)
@@ -180,6 +181,24 @@ if [[ "${EVALUATION_ROLE}" == "final_test" ]]; then
     echo "[ERROR] final_test cannot evaluate a checkpoint on a different environment." >&2
     exit 2
   fi
+  if [[ -n "${EXPLICIT_SEED_START}" || -n "${EXPLICIT_N_ENVS}" ]]; then
+    echo "[ERROR] final_test uses the repository's frozen task set; SEED_START/N_ENVS overrides are not allowed." >&2
+    exit 2
+  fi
+  case "${ENVIRONMENT}" in
+    sokoban)
+      if [[ "${SEED_SOURCE}" != "board_split" ]]; then
+        echo "[ERROR] Sokoban final_test must use experiments/sokoban_board_split.json." >&2
+        exit 2
+      fi
+      ;;
+    navigation)
+      if [[ "${SEED_SOURCE}" != "range" || "${SEED_START}" != "30" || "${N_ENVS}" != "30" ]]; then
+        echo "[ERROR] Navigation final_test must use frozen tasks 30-59." >&2
+        exit 2
+      fi
+      ;;
+  esac
 fi
 
 write_manifest() {
@@ -210,10 +229,13 @@ EVAL_SOURCE_METHOD="${SOURCE_METHOD}" \
 EVAL_SOURCE_ENVIRONMENT="${SOURCE_ENVIRONMENT}" \
 EVAL_SOURCE_TRAIN_SEED="${SOURCE_TRAIN_SEED}" \
 EVAL_SOURCE_CHECKPOINT_STEP="${SOURCE_CHECKPOINT_STEP}" \
+EVAL_ROOT_DIR="${ROOT_DIR}" \
 PYTHONPATH="${ROOT_DIR}:${ROOT_DIR}/verl${PYTHONPATH:+:${PYTHONPATH}}" \
     "${PYTHON_BIN}" - "${COMMAND[@]}" <<'PY'
+import json
 import os
 import sys
+from pathlib import Path
 
 from vagen.utils.run_manifest import write_compatible_manifest
 
@@ -239,6 +261,14 @@ manifest = {
     "resume_mode": "skip_completed",
     "command": sys.argv[1:],
 }
+if manifest["seed_source"] == "board_split":
+    split_path = Path(os.environ["EVAL_ROOT_DIR"]) / "experiments/sokoban_board_split.json"
+    split = json.loads(split_path.read_text())
+    manifest["expected_seeds"] = [int(seed) for seed in split["test"]["seeds"]]
+else:
+    manifest["expected_seeds"] = list(
+        range(manifest["seed_start"], manifest["seed_end_exclusive"])
+    )
 optional_strings = {
     "source_run_dir": "EVAL_SOURCE_RUN_DIR",
     "source_selection_manifest": "EVAL_SOURCE_SELECTION_MANIFEST",

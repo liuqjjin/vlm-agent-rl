@@ -89,4 +89,4 @@ if [[ "${PRELOAD_NAVIGATION:-0}" == "1" ]]; then
 fi
 
 echo "[OK] AutoDL bootstrap completed in conda env '${ENV_NAME}'."
-echo "     Next: bash scripts/run_smoke.sh"
+echo "     Next: activate '${ENV_NAME}' in the calling shell, then run bash scripts/run_smoke.sh"

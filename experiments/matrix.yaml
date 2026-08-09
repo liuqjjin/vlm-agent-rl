@@ -34,9 +34,9 @@ environments:
     train: examples/train/sokoban/train_sokoban_vision.yaml
     train_seeds: [1, 10000]  # Training: 10000 requested seeds -> 3902 distinct boards
     validation: examples/train/sokoban/val_sokoban_vision.yaml
-    validation_seeds: [10001, 10128]  # Validation for checkpoint selection
+    validation_seeds: [10004, 10579]  # 128 enumerated boards, disjoint from train/test
     evaluation: examples/evaluate/sokoban/config.yaml
-    evaluation_seeds: [20003, 20645]  # Final test: enumerated board-disjoint seed_list
+    evaluation_seeds: [20003, 20655]  # Final test: enumerated board-disjoint seed_list
     # Requested seeds are not task identities in Sokoban: reset() advances the
     # seed until min_solution_steps is met, so different seeds can produce the
     # same board. This artifact fingerprints the board each seed actually

@@ -9,6 +9,7 @@ transcription error, so the table is checked against its own denominators.
 
 from __future__ import annotations
 
+import csv
 import re
 from pathlib import Path
 
@@ -18,6 +19,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 README = ROOT / "README.md"
+PREDICTED_CSV = ROOT / "results" / "main_results_predicted.csv"
+PREDICTED_DOCUMENT = ROOT / "PREDICTED_METRICS.md"
 
 TRAIN_SEEDS = 3
 # (environment, per-checkpoint episodes, per-episode turn cap)
@@ -117,3 +120,35 @@ def test_resume_reports_the_same_headline_numbers() -> None:
         for row in (episode_row, base_row):
             percent = CELL.search(row[column]).group(1)
             assert f"{percent}%" in resume, f"{percent}% missing from the resume"
+
+
+def test_prediction_sources_match_the_finished_state_table() -> None:
+    readme_rows = _result_rows()
+    table = {
+        ("Sokoban", row[0]): (CELL.search(row[1]), float(row[2]))
+        for row in readme_rows
+    }
+    table.update(
+        {
+            ("Navigation", row[0]): (CELL.search(row[3]), float(row[4]))
+            for row in readme_rows
+        }
+    )
+    aliases = {
+        "Base Qwen2.5-VL-3B": "Base Qwen2.5-VL-3B（推理）",
+        "fixed no-concat GAE": "no-concat GAE",
+    }
+    predicted_document = PREDICTED_DOCUMENT.read_text()
+    with PREDICTED_CSV.open(newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 8
+    for row in rows:
+        method = aliases.get(row["Method"], row["Method"])
+        match, mean_turns = table[(row["Environment"], method)]
+        assert match is not None
+        percent = float(match.group(1))
+        assert float(row["Visual Success"]) == pytest.approx(
+            int(match.group(2)) / int(match.group(3))
+        )
+        assert float(row["Mean Turns"]) == mean_turns
+        assert f"{percent:.1f}%" in predicted_document

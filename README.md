@@ -15,7 +15,7 @@
 - 数据并行 padding 复制出的整行副本，会作为额外样本混进组内统计；
 - 逐 turn 的 GAE 每个回合只有一个有效 value 目标，其余位置必须被显式忽略，否则 critic 会被训练去拟合哨兵值。
 
-这个仓库要回答的是：把数据拆成逐轮行之后，如何重建 episode 级的统计单元与奖励归因，以及在这个前提下 critic-free 的组相对目标能否稳定优于逐轮 GAE。
+这个仓库要回答的是：把数据拆成逐轮行之后，如何重建 episode 级的统计单元与奖励归因，以及 critic-free 的组相对目标在这类训练 recipe 中表现如何。
 
 ## 方法概览
 
@@ -51,7 +51,7 @@ flowchart LR
 
 ### 轨迹身份与重构
 
-no-concat 的每一行由 `(group_idx, traj_idx, turn_idx)` 唯一标识，另外携带 `last_turn`、`traj_success` 和 `state_anchor`。这些字段由 agent loop 在环境交互时写入（[`vagen/agent_loop/gym_agent_loop_no_concat.py`](vagen/agent_loop/gym_agent_loop_no_concat.py)），由 trainer 透传过 padding 与日志，估计器只消费不重新解释。
+no-concat 的每一行由 `(group_idx, traj_idx, turn_idx)` 唯一标识，并携带 `last_turn` 与 `traj_success`。这些字段由 agent loop 在环境交互时写入（[`vagen/agent_loop/gym_agent_loop_no_concat.py`](vagen/agent_loop/gym_agent_loop_no_concat.py)），由 trainer 透传过 padding 与日志，估计器只消费不重新解释。`state_anchor` 另行保留给 rollout 的状态相对分析。
 
 [`compute_no_concat_episode_grpo`](vagen/custom_advantage/no_concat_episode_grpo.py) 在计算任何统计量之前先做完整性检查：相同 `(group, traj, turn)` 的行视为 padding 副本，只保留第一行且副本内容必须完全一致；每条轨迹的 `turn_idx` 从 1 开始连续，且恰好一个终止标记落在最后一个回合；每个 group 的 `traj_idx` 必须恰好是 `range(rollout.n)`。不满足的 group 按 `incomplete_group_action` 处理，默认直接报错，可切换为 `drop`。只有通过检查的轨迹才进入奖励归约与组内统计。
 
@@ -110,10 +110,10 @@ Sokoban 的 requested seed 不是任务身份：`reset` 会在生成的房间不
 
 | 环境 | 训练 | Validation | Final test | 回合上限 |
 |---|---|---|---|:--:|
-| Sokoban | 10,000 seeds / 3,902 棋盘 | 128 seeds / 124 棋盘 | 128 seeds / 128 棋盘，全部未见 | 5 |
+| Sokoban | 10,000 seeds / 3,902 棋盘 | 128 seeds / 128 棋盘，训练中未见 | 128 seeds / 128 棋盘，训练与验证中均未见 | 5 |
 | Navigation | `base_train` tasks `[0, 1199]` | `base` tasks `[0, 29]` | `base` tasks `[30, 59]` | 10 |
 
-Navigation 的 `base_train` 与 `base` 使用互斥的 AI2-THOR 场景集合。三份 Sokoban 配置共用同一个 `min_solution_steps: [1,5]` 难度窗口，因此测试集与训练集的差异是棋盘身份而不是题目难度。Validation 只用于选 checkpoint，它与训练共享部分棋盘；held-out 的保证针对 final test——128 个棋盘互不相同，且都不在训练与验证的棋盘集合里。选定后每个冻结 checkpoint 在 final test 上评测一次。
+Navigation 的 `base_train` 与 `base` 使用互斥的 AI2-THOR 场景集合。三份 Sokoban 配置共用同一个 `min_solution_steps: [1,5]` 难度窗口，训练、验证和最终测试按生成后的棋盘指纹两两互斥。checkpoint 只用 validation 指标选择，选定后每个冻结 checkpoint 在 final test 上评测一次。
 
 评测的上下文协议跟随训练：no-concat 训练出的 checkpoint 只看系统提示与当前观测，concat 与基础模型看完整历史。该值由方法推出、写进 evaluation manifest、参与 resume 身份，聚合器在训练与评测协议不一致时拒绝发布结果。
 
@@ -134,11 +134,11 @@ Navigation 的 `base_train` 与 `base` 使用互斥的 AI2-THOR 场景集合。�
 
 Navigation 的分母只有 90 个 episode，一个 episode 就相当于 1.1 个百分点，Base 行更是 3.3 个百分点，因此该列的小差距不宜按精确数值解读。
 
-重构轨迹之后，critic-free 的组相对目标在两个环境上都好于逐轮 GAE，而且不需要维护 critic，峰值显存低约 2,000 MiB。短上下文的 episode GRPO 与拼接完整历史的 concat GRPO 相当甚至略高——在两者用同一套 held-out 棋盘、各自的训练上下文协议评测的前提下，这说明 no-concat 的短上下文并没有构成成功率上限。成功轨迹的平均回合在三种方法上都低于基础模型，episode GRPO 最低。
+在当前三条完整 recipe 的点估计中，critic-free episode GRPO 在两个环境上均高于逐轮 GAE，峰值显存低约 2,000 MiB；相对 concat GRPO 也没有观察到明显劣势。成功轨迹的平均回合在三种方法上都低于基础模型，episode GRPO 最低。由于各 recipe 还存在下述共变量，这些结果不用于单因素因果归因或显著性声明。
 
 这三条是完整 recipe 的比较，不是单变量消融：三者在每个 global step 的 optimizer step 数、奖励目标、组内标准差口径和每回合响应预算上同时不同。[EXPERIMENTS.md §2.1](EXPERIMENTS.md) 列出了这些共变量及其代码位置；要把差异归因到单一机制，需要先统一这些设置再单独跑一次消融。
 
-完整的实验协议、统计口径与 funnel 定义见 [EXPERIMENTS.md](EXPERIMENTS.md)；方法、环境、seed、步数和阈值的机器可读定义见 [experiments/matrix.yaml](experiments/matrix.yaml)。
+完整的实验协议与统计口径见 [EXPERIMENTS.md](EXPERIMENTS.md)；方法、环境、seed、步数和阈值的机器可读定义见 [experiments/matrix.yaml](experiments/matrix.yaml)。
 
 ## 安装与环境准备
 
@@ -172,6 +172,8 @@ conda run -n vagen python -m pytest vagen/tests verl/tests/trainer/ppo -q
 
 ```bash
 DOWNLOAD_MODEL=1 PRELOAD_NAVIGATION=1 bash scripts/autodl_bootstrap.sh
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate vagen
 ```
 
 该脚本通过 verl 自带的 `install_vllm_sglang_mcore.sh` 安装 vLLM 与 SGLang，装上 AI2-THOR 与评测依赖，写出 `artifacts/environment/gpu-pip-freeze.txt` 和 `nvidia-smi.txt`，然后跑一遍环境检查和三个关键测试。它假定以 root 运行（需要 `apt-get install libvulkan1`），并要求至少 `MIN_FREE_GB`（默认 600）GiB 可用磁盘。
@@ -281,7 +283,7 @@ vagen/
   ray_trainer.py          # 训练主循环、value mask 挂载、parity 门控
 scripts/                  # 环境准备、训练、评测、实验矩阵、GPU 采样
 examples/                 # 各环境的训练与评测配置
-experiments/matrix.yaml   # 方法、环境、seed、funnel 和阈值的机器可读定义
+experiments/matrix.yaml   # 方法、环境、seed、实验阶段和阈值的机器可读定义
 results/cpu/              # 已提交的 CPU 诊断原始数据与汇总
 verl/                     # Ray / FSDP / vLLM / SGLang 训练栈（子模块）
 ```
@@ -362,7 +364,7 @@ conda run -n vagen python -m vagen.analysis.sokoban_board_split \
   verify --split experiments/sokoban_board_split.json --sample 8
 ```
 
-`build` 会为训练与验证的每个 seed 生成一次棋盘（约 20 分钟），再从候选区间里挑出 128 个未见且互不相同的测试棋盘。`verify` 只做结构校验，`--sample N` 会重新生成 N 个测试棋盘确认指纹未漂移。
+`build` 先生成训练棋盘指纹，再依次选出 128 个训练中未见的 validation 棋盘和 128 个 train/validation 均未见的测试棋盘。`verify` 检查三份棋盘两两互斥；`--sample N` 会分别重建 N 个 validation/test 棋盘，确认提交的指纹没有漂移。
 
 ### 分析原始 rollout
 

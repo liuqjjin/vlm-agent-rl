@@ -27,7 +27,11 @@ def test_matrix_split_declarations_match_runtime_configs(environment: str) -> No
     evaluation = _parse_env_specs(evaluation_config)[0]
 
     assert list(train.seed[:2]) == list(declaration.train_seeds)
-    assert list(validation.seed[:2]) == list(declaration.validation_seeds)
+    if validation.seed_list:
+        validation_bounds = [min(validation.seed_list), max(validation.seed_list)]
+    else:
+        validation_bounds = list(validation.seed[:2])
+    assert validation_bounds == list(declaration.validation_seeds)
     if evaluation.seed_list:
         # Environments whose requested seed is not a task identity enumerate
         # their held-out tasks; the matrix then declares the enumerated bounds.
