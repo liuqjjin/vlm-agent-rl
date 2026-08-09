@@ -59,6 +59,7 @@ jobs:
             vagen/tests/test_logprob_parity.py \
             vagen/tests/test_no_concat_episode_grpo.py \
             vagen/tests/test_no_concat_agent_loop.py \
+            vagen/tests/test_reported_results_consistency.py \
             vagen/tests/test_rollout_analysis.py \
             vagen/tests/test_seed_partitions.py \
             vagen/tests/test_sokoban_board_split.py
@@ -93,6 +94,7 @@ jobs:
             vagen/tests/test_data_splits.py \
             vagen/tests/test_evaluation_context_protocol.py \
             vagen/tests/test_sokoban_board_split.py \
+            vagen/tests/test_reported_results_consistency.py \
             verl/tests/trainer/ppo/test_sparse_value_supervision_on_cpu.py \
             verl/tests/trainer/ppo/test_policy_weights_on_cpu.py \
             verl/tests/trainer/ppo/test_policy_weights_integration.py

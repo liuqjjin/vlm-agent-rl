@@ -181,7 +181,13 @@ def load_split(path: str | Path) -> dict[str, Any]:
 
 
 def check_split_consistency(split: Mapping[str, Any]) -> list[str]:
-    """Return structural problems in a split artifact without regenerating boards."""
+    """Return structural problems in a split artifact without regenerating boards.
+
+    The guarantee this checks is that the *test* boards are unseen: they must be
+    pairwise distinct and absent from both train and validation.  Train and
+    validation may legitimately share boards — validation only selects
+    checkpoints, it makes no held-out claim — so their overlap is not an error.
+    """
     problems: list[str] = []
     train = set(split["train"]["fingerprints"])
     validation = set(split["validation"]["fingerprints"])

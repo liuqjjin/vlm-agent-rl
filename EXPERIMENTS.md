@@ -63,7 +63,7 @@ Sokoban 的 seed **不是**任务身份。`PatchedSokobanEnv.reset` 会在生成
 | Validation | `examples/train/sokoban/val_sokoban_vision.yaml` | `[10001, 10128]` | 128 | 124 |
 | Final test | `examples/evaluate/sokoban/config.yaml` | 枚举 `seed_list`（`20003`–`20645`） | 128 | 128 |
 
-测试集的 128 个棋盘互不相同，且都不在 train/validation 的棋盘集合中。三份配置使用同一个 `min_solution_steps: [1,5]` 难度窗口，因此 held-out 的差异是棋盘身份，不是题目难度。
+测试集的 128 个棋盘互不相同，且都不在 train/validation 的棋盘集合中。三份配置使用同一个 `min_solution_steps: [1,5]` 难度窗口，因此 held-out 的差异是棋盘身份，不是题目难度。Validation 可能与训练共享棋盘（用于 checkpoint 选择而非最终声明），但测试集与两者都互斥。
 
 重新生成与校验：
 

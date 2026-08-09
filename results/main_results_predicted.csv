@@ -1,5 +1,5 @@
 Method,Visual Success,Peak VRAM,GPU·h,Mean Turns,Ratio P95,Status,Environment,Seed,Commit,Evidence,Notes
-Base Qwen2.5-VL-3B,0.15,42000,0.8,3.8,,predicted-pending-gpu,Sokoban,10129:10256,,PREDICTED_METRICS.md,"保守预测中央值；128 个 held-out episodes；GPU·h 为整次 base evaluation"
+Base Qwen2.5-VL-3B,0.15,42000,0.8,3.8,,predicted-pending-gpu,Sokoban,20003:20645,,PREDICTED_METRICS.md,"保守预测中央值；128 个棋盘级 held-out episodes；GPU·h 为整次 base evaluation"
 concat GRPO,0.45,46000,12.5,3.2,0.98,predicted-pending-gpu,Sokoban,"0,1,2 (planned aggregate)",,PREDICTED_METRICS.md,"保守预测中央值；成功率/回合/Ratio 为三训练 seed 聚合规划，GPU·h 为单 seed 401 updates"
 fixed no-concat GAE,0.42,47500,14.2,3.5,0.97,predicted-pending-gpu,Sokoban,"0,1,2 (planned aggregate)",,PREDICTED_METRICS.md,"保守预测中央值；成功率/回合/Ratio 为三训练 seed 聚合规划，GPU·h 为单 seed 401 updates"
 no-concat episode GRPO,0.48,45500,12.8,3.0,0.98,predicted-pending-gpu,Sokoban,"0,1,2 (planned aggregate)",,PREDICTED_METRICS.md,"保守预测中央值；成功率/回合/Ratio 为三训练 seed 聚合规划，GPU·h 为单 seed 401 updates"

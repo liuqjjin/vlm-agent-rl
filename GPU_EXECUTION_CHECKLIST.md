@@ -126,7 +126,7 @@ bash scripts/run_experiment_matrix.sh base-eval
 
 **Expected output:**
 ```
-Sokoban: 128 episodes (seeds 10129-10256)
+Sokoban: 128 episodes (board-disjoint seeds enumerated in experiments/sokoban_board_split.json, 20003-20645)
 Navigation: 30 episodes (seeds 30-59; includes Unity rendering)
 
 Results written to:
@@ -315,10 +315,15 @@ records `GPU·h Total` across all three training seeds.
 TRAINING_RUN_NAME=sokoban_confirmatory_no_concat_episode_grpo_outcome_trajectory_seed0
 EVAL_MODEL_PATH="/path/to/vlm-agent-rl/exps/vlm_agent_rl_exports/${TRAINING_RUN_NAME}/model" \
 EVAL_ENVIRONMENT=sokoban \
+EVAL_METHOD=no_concat_episode_grpo \
 ANTI_CHEAT_ROOT="exps/eval/anti_cheat/${TRAINING_RUN_NAME}" \
 EVALUATION_ROLE=anti_cheat \
   bash scripts/run_experiment_matrix.sh anti-cheat
 ```
+
+`EVAL_METHOD` is required: it selects the evaluation context protocol for the
+checkpoint. Omitting it exits 2 rather than silently falling back to the full
+dialogue history.
 
 **Expected output:**
 ```

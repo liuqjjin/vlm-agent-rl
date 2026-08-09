@@ -6,7 +6,7 @@
 
 机器可读表固定保留 8 行中央值：4 种方法状态（base + 3 个训练方法）× 2 个环境。
 
-- Base 行使用一次固定 held-out 评测：Sokoban seeds `[10129, 10256]`，Navigation `base` tasks `[30, 59]`。
+- Base 行使用一次固定 held-out 评测：Sokoban 为 [`experiments/sokoban_board_split.json`](experiments/sokoban_board_split.json) 枚举的 128 个棋盘级 seed（`20003`–`20645`），Navigation `base` tasks `[30, 59]`。
 - 训练方法行的成功率、成功平均回合和 Ratio P95，表示训练 seeds `{0,1,2}` 的**计划聚合中央值**。
 - 训练方法行的 GPU·h 表示**单环境、单训练 seed、401 updates** 的预计占卡时间，不是三个 seeds 的合计。
 - 峰值显存表示同配置单卡运行的规划中央值；最终报告取实测运行中的最大值，并附卡型与配置。

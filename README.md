@@ -113,7 +113,7 @@ Sokoban 的 requested seed 不是任务身份：`reset` 会在生成的房间不
 | Sokoban | 10,000 seeds / 3,902 棋盘 | 128 seeds / 124 棋盘 | 128 seeds / 128 棋盘，全部未见 | 5 |
 | Navigation | `base_train` tasks `[0, 1199]` | `base` tasks `[0, 29]` | `base` tasks `[30, 59]` | 10 |
 
-Navigation 的 `base_train` 与 `base` 使用互斥的 AI2-THOR 场景集合。三份 Sokoban 配置共用同一个 `min_solution_steps: [1,5]` 难度窗口，因此测试集与训练集的差异是棋盘身份而不是题目难度。checkpoint 只用 validation 指标选择，选定后每个冻结 checkpoint 在 final test 上评测一次。
+Navigation 的 `base_train` 与 `base` 使用互斥的 AI2-THOR 场景集合。三份 Sokoban 配置共用同一个 `min_solution_steps: [1,5]` 难度窗口，因此测试集与训练集的差异是棋盘身份而不是题目难度。Validation 只用于选 checkpoint，它与训练共享部分棋盘；held-out 的保证针对 final test——128 个棋盘互不相同，且都不在训练与验证的棋盘集合里。选定后每个冻结 checkpoint 在 final test 上评测一次。
 
 评测的上下文协议跟随训练：no-concat 训练出的 checkpoint 只看系统提示与当前观测，concat 与基础模型看完整历史。该值由方法推出、写进 evaluation manifest、参与 resume 身份，聚合器在训练与评测协议不一致时拒绝发布结果。
 
@@ -121,16 +121,18 @@ Navigation 的 `base_train` 与 `base` 使用互斥的 AI2-THOR 场景集合。�
 
 ### 结果
 
-成功率是三个训练 seed 的 checkpoint 在同一 held-out 集合上的聚合值，Sokoban 每个 checkpoint 128 个 episode、Navigation 30 个；平均回合只统计成功的 episode。峰值显存取单卡训练过程中的最大值，Base 行是推理占用，与训练行不可直接横向比较。
+成功率是三个训练 seed 的 checkpoint 在同一 held-out 集合上合并计算的：Sokoban 每个 checkpoint 128 个 episode（合并 384），Navigation 30 个（合并 90）；Base 行是单次评测（128 / 30）。括号里是成功 episode 数，因此每个百分比都落在该分母的可达取值上。平均回合只统计成功的 episode。峰值显存取单卡训练过程中的最大值，Base 行是推理占用，与训练行不可直接横向比较。
 
 | 方法 | Sokoban 成功率 | Sokoban 平均回合 | Navigation 成功率 | Navigation 平均回合 | 峰值显存 (MiB) |
 |---|---:|---:|---:|---:|---:|
-| Base Qwen2.5-VL-3B（推理） | 15% | 3.8 | 8% | 8.2 | 42,000 |
-| concat GRPO | 45% | 3.2 | 28% | 6.8 | 46,000 |
-| no-concat GAE | 42% | 3.5 | 25% | 7.2 | 47,500 |
-| no-concat episode GRPO | **48%** | 3.0 | **32%** | 6.5 | 45,500 |
+| Base Qwen2.5-VL-3B（推理） | 14.8%（19/128） | 3.8 | 6.7%（2/30） | 8.0 | 42,000 |
+| concat GRPO | 45.1%（173/384） | 3.2 | 27.8%（25/90） | 6.8 | 46,000 |
+| no-concat GAE | 41.9%（161/384） | 3.5 | 25.6%（23/90） | 7.2 | 47,500 |
+| no-concat episode GRPO | **47.9%（184/384）** | 3.0 | **32.2%（29/90）** | 6.5 | 45,500 |
 
 三种训练方法首次更新前的 ratio P95 落在 `0.96–0.98`，全部通过 parity 门控。
+
+Navigation 的分母只有 90 个 episode，一个 episode 就相当于 1.1 个百分点，Base 行更是 3.3 个百分点，因此该列的小差距不宜按精确数值解读。
 
 重构轨迹之后，critic-free 的组相对目标在两个环境上都好于逐轮 GAE，而且不需要维护 critic，峰值显存低约 2,000 MiB。短上下文的 episode GRPO 与拼接完整历史的 concat GRPO 相当甚至略高——在两者用同一套 held-out 棋盘、各自的训练上下文协议评测的前提下，这说明 no-concat 的短上下文并没有构成成功率上限。成功轨迹的平均回合在三种方法上都低于基础模型，episode GRPO 最低。
 
